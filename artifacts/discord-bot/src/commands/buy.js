@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getGuildSettings, saveGuildSettings } = require('../utils/settings');
 const { getBalance, removeBalance, toTaka, toUSD } = require('../utils/zenixPoints');
+const { logPurchase, getLogChannel } = require('../utils/stockHistory');
 
 function itemName(item) {
   return typeof item === 'string' ? item : item.name;
@@ -128,6 +129,42 @@ module.exports = {
       .setTimestamp();
 
     await interaction.reply({ embeds: [successEmbed] });
+
+    // ── Log purchase to stock history ─────────────────────────────────────────
+    try {
+      logPurchase(interaction.guildId, {
+        userId:    userId,
+        username:  interaction.user.username,
+        item:      name,
+        amount,
+        totalCost,
+        timestamp: Date.now(),
+      });
+
+      // Post to the private log channel if one is configured
+      const logChannelId = getLogChannel(interaction.guildId);
+      if (logChannelId) {
+        const logChannel = interaction.guild.channels.cache.get(logChannelId);
+        if (logChannel) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('🛒 New Auto-Buy Purchase')
+            .setThumbnail(interaction.user.displayAvatarURL())
+            .addFields(
+              { name: 'User',       value: `<@${userId}> (${interaction.user.username})`, inline: true },
+              { name: 'Item',       value: `**${name}**`,                                  inline: true },
+              { name: 'Amount',     value: `**${amount}**`,                                inline: true },
+              { name: 'Total Cost', value: `**${totalCost.toLocaleString()} ZP** (৳${toTaka(totalCost)} / ${toUSD(totalCost)})`, inline: false },
+              { name: 'New Balance',value: `**${newBalance.toLocaleString()} ZP**`,        inline: false },
+            )
+            .setColor(0x2ecc71)
+            .setFooter({ text: `Powered by Zenix Realm • ${interaction.guild.name}` })
+            .setTimestamp();
+          await logChannel.send({ embeds: [logEmbed] });
+        }
+      }
+    } catch (err) {
+      console.error('[stockhistory] Failed to log purchase:', err.message);
+    }
 
     // ── Auto-delivery DM ──────────────────────────────────────────────────────
     try {
