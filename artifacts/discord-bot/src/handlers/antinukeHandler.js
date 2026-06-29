@@ -109,7 +109,7 @@ async function handleChannelDelete(channel) {
   };
 
   const entry = await getAuditEntry(guild, AuditLogEvent.ChannelDelete);
-  if (!entry) return;
+  if (!entry || entry.target?.id !== channel.id) return;
 
   const executor = entry.executor;
   const member   = await guild.members.fetch(executor.id).catch(() => null);
@@ -153,7 +153,7 @@ async function handleChannelCreate(channel) {
   if (!settings.enabled) return;
 
   const entry = await getAuditEntry(guild, AuditLogEvent.ChannelCreate);
-  if (!entry) return;
+  if (!entry || entry.target?.id !== channel.id) return;
 
   const executor = entry.executor;
   const member   = await guild.members.fetch(executor.id).catch(() => null);
@@ -189,7 +189,7 @@ async function handleRoleDelete(role) {
   };
 
   const entry = await getAuditEntry(guild, AuditLogEvent.RoleDelete);
-  if (!entry) return;
+  if (!entry || entry.target?.id !== role.id) return;
 
   const executor = entry.executor;
   const member   = await guild.members.fetch(executor.id).catch(() => null);
@@ -232,7 +232,7 @@ async function handleRoleCreate(role) {
   if (!settings.enabled) return;
 
   const entry = await getAuditEntry(guild, AuditLogEvent.RoleCreate);
-  if (!entry) return;
+  if (!entry || entry.target?.id !== role.id) return;
 
   const executor = entry.executor;
   const member   = await guild.members.fetch(executor.id).catch(() => null);
@@ -259,7 +259,7 @@ async function handleGuildBanAdd(ban) {
   if (!settings.enabled) return;
 
   const entry = await getAuditEntry(guild, AuditLogEvent.MemberBanAdd);
-  if (!entry) return;
+  if (!entry || entry.target?.id !== ban.user.id) return;
 
   const executor = entry.executor;
   const member   = await guild.members.fetch(executor.id).catch(() => null);
@@ -315,7 +315,7 @@ async function handleGuildMemberAdd(member) {
   if (!settings.enabled) return;
 
   const entry = await getAuditEntry(guild, AuditLogEvent.BotAdd, 8000);
-  if (!entry) return;
+  if (!entry || entry.target?.id !== member.id) return;
 
   const executor = entry.executor;
   const exMember = await guild.members.fetch(executor.id).catch(() => null);

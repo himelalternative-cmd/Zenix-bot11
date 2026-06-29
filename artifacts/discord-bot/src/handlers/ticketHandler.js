@@ -261,6 +261,9 @@ async function handleTicketTranscript(interaction) {
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 async function handleTicketDelete(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    return interaction.reply({ content: '❌ Only administrators can delete tickets.', ephemeral: true });
+  }
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('ticket_delete_confirm').setLabel('Yes, delete it').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('ticket_delete_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary)
@@ -273,6 +276,9 @@ async function handleTicketDelete(interaction) {
 }
 
 async function handleTicketDeleteConfirm(interaction) {
+  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    return interaction.reply({ content: '❌ Only administrators can delete tickets.', ephemeral: true });
+  }
   const channel  = interaction.channel;
   const ownerId  = getOwnerByChannel(channel.id);
   if (ownerId) removeTicket(ownerId);

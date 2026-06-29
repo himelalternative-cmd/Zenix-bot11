@@ -177,15 +177,18 @@ async function handleTrxModal(interaction) {
   await interaction.channel.send({ embeds: [adminEmbed], components: [confirmRow] });
 }
 
-// ── Helper: check if member has a role named "Owner" ──────────────────────────
-function hasOwnerRole(member) {
-  return member.roles.cache.some(r => r.name.toLowerCase() === 'owner');
+// ── Helper: check if member can manage payments ───────────────────────────────
+// Accepts: guild owner OR Administrator permission.
+// Role-name checks ("Owner") are spoofable; permission flags are not.
+function canManagePayments(member, guild) {
+  if (member.id === guild.ownerId) return true;
+  return member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
-// ── Confirm Payment (Owner role only) ─────────────────────────────────────────
+// ── Confirm Payment (Admin/Owner only) ────────────────────────────────────────
 async function handlePayConfirm(interaction) {
-  if (!hasOwnerRole(interaction.member)) {
-    return interaction.reply({ content: '❌ Only members with the **Owner** role can confirm payments.', ephemeral: true });
+  if (!canManagePayments(interaction.member, interaction.guild)) {
+    return interaction.reply({ content: '❌ Only server administrators can confirm payments.', ephemeral: true });
   }
 
   const buyerId = interaction.customId.split(':')[1];
@@ -232,10 +235,10 @@ async function handlePayConfirm(interaction) {
   } catch {}
 }
 
-// ── Reject Payment (Owner role only) — opens reason modal ─────────────────────
+// ── Reject Payment (Admin/Owner only) — opens reason modal ────────────────────
 async function handlePayReject(interaction) {
-  if (!hasOwnerRole(interaction.member)) {
-    return interaction.reply({ content: '❌ Only members with the **Owner** role can reject payments.', ephemeral: true });
+  if (!canManagePayments(interaction.member, interaction.guild)) {
+    return interaction.reply({ content: '❌ Only server administrators can reject payments.', ephemeral: true });
   }
 
   const buyerId = interaction.customId.split(':')[1];

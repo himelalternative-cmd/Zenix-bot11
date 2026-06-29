@@ -2,6 +2,12 @@ const fs = require('fs');
 const path = require('path');
 
 const DATA_PATH = path.join(__dirname, '../../data/guild-settings.json');
+const TMP_PATH  = DATA_PATH + '.tmp';
+
+// ── In-memory cache (single source of truth) ──────────────────────────────────
+// Eliminates the read-modify-write race: all reads hit the cache, not disk.
+// Node.js is single-threaded so synchronous writes are serialised automatically.
+let _cache = null;
 
 function ensureDataDir() {
   const dir = path.dirname(DATA_PATH);
@@ -9,18 +15,26 @@ function ensureDataDir() {
   if (!fs.existsSync(DATA_PATH)) fs.writeFileSync(DATA_PATH, '{}', 'utf8');
 }
 
-function getSettings() {
+function loadFromDisk() {
   ensureDataDir();
   try {
-    return JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
+    _cache = JSON.parse(fs.readFileSync(DATA_PATH, 'utf8'));
   } catch {
-    return {};
+    _cache = {};
   }
 }
 
+function getSettings() {
+  if (_cache === null) loadFromDisk();
+  return _cache;
+}
+
 function saveSettings(data) {
+  _cache = data;
   ensureDataDir();
-  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2), 'utf8');
+  // Atomic write: write to a temp file first, then rename (rename is atomic on Linux)
+  fs.writeFileSync(TMP_PATH, JSON.stringify(data, null, 2), 'utf8');
+  fs.renameSync(TMP_PATH, DATA_PATH);
 }
 
 function getGuildSettings(guildId) {
@@ -43,7 +57,7 @@ function getGuildSettings(guildId) {
 }
 
 function saveGuildSettings(guildId, settings) {
-  const all = getSettings();
+  const all = getSettings(); // reads from cache — no stale disk snapshot
   all[guildId] = settings;
   saveSettings(all);
 }
