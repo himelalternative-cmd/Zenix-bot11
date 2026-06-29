@@ -1,0 +1,14 @@
+{
+  "name": "@workspace/discord-bot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "build": "echo 'No build step required'"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.26.4",
+    "sodium-native": "^5.1.0"
+  }
+}
