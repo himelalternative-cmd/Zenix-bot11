@@ -4,6 +4,7 @@ const path = require('path');
 const { registerCommands } = require('./utils/deploy-commands');
 const { getSettings, saveSettings } = require('./utils/settings');
 const { attachEvents } = require('./handlers/antinukeHandler');
+const { getGuildAutoReact } = require('./utils/autoReactSettings');
 
 const client = new Client({
   intents: [
@@ -116,6 +117,22 @@ client.on('interactionCreate', async interaction => {
 
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+
+  // Auto-react
+  if (message.guild) {
+    const configs = getGuildAutoReact(message.guild.id);
+    const channelConfig = configs[message.channel.id];
+    if (channelConfig?.emojis?.length) {
+      for (const emoji of channelConfig.emojis) {
+        try {
+          await message.react(emoji);
+        } catch {
+          // Invalid or unavailable emoji — skip silently
+        }
+      }
+    }
+  }
+
   if (client.handlePrefix) {
     await client.handlePrefix(message);
   }
