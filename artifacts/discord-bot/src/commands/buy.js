@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { getGuildSettings, saveGuildSettings } = require('../utils/settings');
+const { getGuildSettings, saveGuildSettings, getSettings, generateOrderId } = require('../utils/settings');
 const { getBalance, removeBalance, toTaka, toUSD } = require('../utils/zenixPoints');
 const { logPurchase, getLogChannel } = require('../utils/stockHistory');
 
@@ -164,6 +164,51 @@ module.exports = {
       }
     } catch (err) {
       console.error('[stockhistory] Failed to log purchase:', err.message);
+    }
+
+    // ── Post to order channel ─────────────────────────────────────────────────
+    try {
+      const orderChannelId = settings.orderChannelId;
+      if (orderChannelId) {
+        const orderChannel = interaction.guild.channels.cache.get(orderChannelId);
+        if (orderChannel) {
+          const orderId    = generateOrderId(settings.orderIdPrefix || 'ORDER');
+          const timestamp  = Math.floor(Date.now() / 1000);
+          const orderColor = settings.orderColor ?? 0x010101;
+
+          const orderLines =
+            `• Handler : Auto Buy\n` +
+            `• Buyer : <@${userId}>\n` +
+            `• Item : ${name}${amount > 1 ? ` × ${amount}` : ''}\n` +
+            `• Order id : ${orderId}\n` +
+            `• Time : <t:${timestamp}:R>`;
+
+          const orderEmbed = new EmbedBuilder()
+            .setTitle(settings.orderTitle || '▶ Order Details:')
+            .setDescription(orderLines)
+            .setColor(orderColor)
+            .setFooter({
+              text: interaction.guild.name,
+              iconURL: interaction.guild.iconURL() ?? undefined,
+            })
+            .setTimestamp();
+
+          await orderChannel.send({ embeds: [orderEmbed] });
+
+          // Increment order count & update bot status
+          settings.orderCount = (settings.orderCount || 0) + 1;
+          saveGuildSettings(interaction.guildId, settings);
+
+          const allSettings = getSettings();
+          let totalOrders = 0;
+          for (const gid of Object.keys(allSettings)) {
+            totalOrders += (allSettings[gid].orderCount || 0);
+          }
+          interaction.client.user.setActivity(`${totalOrders} orders completed`, { type: 3 });
+        }
+      }
+    } catch (err) {
+      console.error('[buy] Failed to post to order channel:', err.message);
     }
 
     // ── Auto-delivery DM ──────────────────────────────────────────────────────
