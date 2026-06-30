@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { getBalance, removeBalance, toTaka, toUSD, getLeaderboard } = require('../utils/zenixPoints');
+const { getBalance, addBalance, removeBalance, toTaka, toUSD, getLeaderboard } = require('../utils/zenixPoints');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -65,7 +65,6 @@ module.exports = {
       if (amount > myBal)                    return interaction.reply({ content: `❌ You only have **${myBal.toLocaleString()} ZP**. You cannot give more than you have.`, ephemeral: true });
 
       removeBalance(interaction.user.id, amount);
-      const { addBalance } = require('../utils/zenixPoints');
       const theirBal = addBalance(target.id, amount);
 
       const embed = new EmbedBuilder()

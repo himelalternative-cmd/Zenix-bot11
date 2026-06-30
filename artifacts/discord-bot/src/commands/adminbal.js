@@ -68,6 +68,9 @@ module.exports = {
       const target  = interaction.options.getUser('user');
       const amount  = interaction.options.getInteger('amount');
       const reason  = interaction.options.getString('reason') || 'No reason provided';
+
+      if (target.bot) return interaction.reply({ content: '❌ Cannot remove points from a bot.', ephemeral: true });
+
       const current = getBalance(target.id);
 
       if (amount > current) {
