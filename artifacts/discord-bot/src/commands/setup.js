@@ -8,21 +8,37 @@ function itemName(item) {
   return typeof item === 'string' ? item : item.name;
 }
 
+// ── Pending item-add map ───────────────────────────────────────────────────────
+// Keyed by nonce; cleaned up after 10 minutes so memory doesn't leak if the
+// admin dismisses the modal without submitting.
+const _pendingItemAdds = new Map(); // nonce → { guildId, name, price, expiresAt }
+
+function _addPending(guildId, name, price) {
+  const nonce = Math.random().toString(36).slice(2, 10); // 8-char alphanumeric
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  _pendingItemAdds.set(nonce, { guildId, name, price, expiresAt });
+  // Lazy cleanup of expired entries
+  for (const [k, v] of _pendingItemAdds) {
+    if (v.expiresAt < Date.now()) _pendingItemAdds.delete(k);
+  }
+  return nonce;
+}
+
 /**
  * Handle the modal submitted after /setup item add.
- * customId format: setup_item_add_modal|guildId|price|name
- * (name is last so it can contain | characters)
+ * customId format: setup_item_add_modal|<nonce>
  */
 async function handleSetupItemAddModal(interaction) {
-  const raw       = interaction.customId; // setup_item_add_modal|guildId|price|name
-  const firstPipe = raw.indexOf('|');
-  const rest      = raw.slice(firstPipe + 1);              // guildId|price|name
-  const p2        = rest.indexOf('|');
-  const guildId   = rest.slice(0, p2);                     // guildId
-  const rest2     = rest.slice(p2 + 1);                    // price|name
-  const p3        = rest2.indexOf('|');
-  const price     = parseInt(rest2.slice(0, p3), 10);      // price
-  const name      = rest2.slice(p3 + 1);                   // name (may contain |)
+  const nonce   = interaction.customId.split('|')[1];
+  const pending = _pendingItemAdds.get(nonce);
+
+  if (!pending || pending.expiresAt < Date.now()) {
+    _pendingItemAdds.delete(nonce);
+    return interaction.reply({ content: '❌ This item-add session has expired. Please run `/setup item add` again.', ephemeral: true });
+  }
+
+  _pendingItemAdds.delete(nonce);
+  const { guildId, name, price } = pending;
 
   const dmMsg    = interaction.fields.getTextInputValue('item_dm_message').trim();
   const settings = getGuildSettings(guildId);
@@ -271,8 +287,9 @@ module.exports = {
         }
 
         // Show a modal to collect the per-item DM message
+        const nonce = _addPending(interaction.guildId, name, price);
         const modal = new ModalBuilder()
-          .setCustomId(`setup_item_add_modal|${interaction.guildId}|${price}|${name}`)
+          .setCustomId(`setup_item_add_modal|${nonce}`)
           .setTitle(`DM Message — ${name.length > 30 ? name.slice(0, 30) + '…' : name}`);
 
         const dmInput = new TextInputBuilder()
