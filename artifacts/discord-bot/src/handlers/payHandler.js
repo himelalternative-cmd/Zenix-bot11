@@ -133,8 +133,6 @@ async function handleTrxModal(interaction) {
   const parts = interaction.customId.split(':');
   const amountDisplay = parts[1] ? decodeURIComponent(parts[1]) : null;
 
-  completedSubmissions.add(userId);
-
   const amountLine = amountDisplay ? `**Amount:** \`${amountDisplay}\`\n` : '';
 
   const confirmEmbed = new EmbedBuilder()
@@ -175,7 +173,9 @@ async function handleTrxModal(interaction) {
       .setStyle(ButtonStyle.Danger)
   );
 
+  // Only mark as submitted after the admin message is sent successfully
   await interaction.channel.send({ embeds: [adminEmbed], components: [confirmRow] });
+  completedSubmissions.add(userId);
 }
 
 // ── Helper: check if member can manage payments ───────────────────────────────
@@ -217,10 +217,12 @@ async function handlePayConfirmModal(interaction) {
 
   const buyerId = interaction.customId.split(':')[1];
   const zpRaw   = interaction.fields.getTextInputValue('zp_amount').trim();
-  const zp      = parseInt(zpRaw, 10);
-
-  if (!zp || zp <= 0 || isNaN(zp)) {
-    return interaction.reply({ content: '❌ Please enter a valid positive number for Zenix Points.', ephemeral: true });
+  if (!/^\d+$/.test(zpRaw)) {
+    return interaction.reply({ content: '❌ Please enter a whole positive number (digits only) for Zenix Points.', ephemeral: true });
+  }
+  const zp = parseInt(zpRaw, 10);
+  if (zp <= 0) {
+    return interaction.reply({ content: '❌ Zenix Points must be greater than zero.', ephemeral: true });
   }
 
   // Add ZP to the buyer's balance
@@ -302,6 +304,10 @@ async function handlePayReject(interaction) {
 
 // ── Reject modal submitted ─────────────────────────────────────────────────────
 async function handleRejectModal(interaction) {
+  if (!canManagePayments(interaction.member, interaction.guild)) {
+    return interaction.reply({ content: '❌ Only server administrators can reject payments.', ephemeral: true });
+  }
+
   const buyerId = interaction.customId.split(':')[1];
   const reason  = interaction.fields.getTextInputValue('reject_reason').trim() || 'No reason provided.';
 
