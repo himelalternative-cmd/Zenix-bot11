@@ -8,6 +8,7 @@ const {
   TextInputStyle,
   PermissionFlagsBits,
 } = require('discord.js');
+const { addBalance } = require('../utils/zenixPoints');
 
 const completedSubmissions = new Set();
 
@@ -185,7 +186,7 @@ function canManagePayments(member, guild) {
   return member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
-// ── Confirm Payment (Admin/Owner only) ────────────────────────────────────────
+// ── Confirm Payment (Admin/Owner only) — opens ZP amount modal ───────────────
 async function handlePayConfirm(interaction) {
   if (!canManagePayments(interaction.member, interaction.guild)) {
     return interaction.reply({ content: '❌ Only server administrators can confirm payments.', ephemeral: true });
@@ -193,10 +194,44 @@ async function handlePayConfirm(interaction) {
 
   const buyerId = interaction.customId.split(':')[1];
 
+  const modal = new ModalBuilder()
+    .setCustomId(`pay_confirm_modal:${buyerId}`)
+    .setTitle('Confirm Payment — Add Zenix Points');
+
+  const zpInput = new TextInputBuilder()
+    .setCustomId('zp_amount')
+    .setLabel('Zenix Points to add')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('e.g. 500')
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder().addComponents(zpInput));
+  await interaction.showModal(modal);
+}
+
+// ── Pay confirm modal submitted — add ZP, DM buyer, update embed ──────────────
+async function handlePayConfirmModal(interaction) {
+  if (!canManagePayments(interaction.member, interaction.guild)) {
+    return interaction.reply({ content: '❌ Only server administrators can confirm payments.', ephemeral: true });
+  }
+
+  const buyerId = interaction.customId.split(':')[1];
+  const zpRaw   = interaction.fields.getTextInputValue('zp_amount').trim();
+  const zp      = parseInt(zpRaw, 10);
+
+  if (!zp || zp <= 0 || isNaN(zp)) {
+    return interaction.reply({ content: '❌ Please enter a valid positive number for Zenix Points.', ephemeral: true });
+  }
+
+  // Add ZP to the buyer's balance
+  const newBalance = addBalance(buyerId, zp);
+
+  // Update the admin embed to show verified state
   const verifiedEmbed = new EmbedBuilder()
     .setTitle('✅ Payment Verified')
     .setDescription(
-      interaction.message.embeds[0]?.description ?? ''
+      (interaction.message?.embeds[0]?.description ?? '') +
+      `\n\n💎 **Zenix Points Added:** \`${zp.toLocaleString()} ZP\``
     )
     .setColor(0x2ecc71)
     .setFooter({ text: `Verified by ${interaction.user.username} • User ID: ${buyerId}` })
@@ -222,17 +257,23 @@ async function handlePayConfirm(interaction) {
   // Allow the buyer to submit again in the future
   completedSubmissions.delete(buyerId);
 
-  // DM the buyer that their payment was confirmed
+  // DM the buyer with ZP confirmation
   try {
     const buyer = await interaction.client.users.fetch(buyerId);
     const dmEmbed = new EmbedBuilder()
       .setTitle('✅ Payment Confirmed!')
-      .setDescription('Your payment has been verified by the server owner.\nThank you!')
+      .setDescription(
+        `Your Payment Confirmed and **${zp.toLocaleString()} Zenix Point** is Added to Your Balance.\n\n` +
+        `💎 **New Balance:** ${newBalance.toLocaleString()} ZP\n\n` +
+        `To buy something, use \`/buy\``
+      )
       .setColor(0x2ecc71)
       .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
       .setTimestamp();
     await buyer.send({ embeds: [dmEmbed] });
-  } catch {}
+  } catch {
+    // DMs disabled — silently ignore
+  }
 }
 
 // ── Reject Payment (Admin/Owner only) — opens reason modal ────────────────────
@@ -309,4 +350,4 @@ async function handleRejectModal(interaction) {
   } catch {}
 }
 
-module.exports = { handlePayCommand, handlePayButton, handleTrxModal, handlePayConfirm, handlePayReject, handleRejectModal };
+module.exports = { handlePayCommand, handlePayButton, handleTrxModal, handlePayConfirm, handlePayConfirmModal, handlePayReject, handleRejectModal };
