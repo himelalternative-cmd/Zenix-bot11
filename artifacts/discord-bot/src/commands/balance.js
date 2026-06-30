@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getBalance, addBalance, removeBalance, toTaka, toUSD, getLeaderboard } = require('../utils/zenixPoints');
+const { getSpentLeaderboard } = require('../utils/stockHistory');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -35,16 +36,23 @@ module.exports = {
       const target  = interaction.options.getUser('user') || interaction.user;
       const balance = getBalance(target.id);
 
+      const spentList = getSpentLeaderboard(interaction.guildId, Infinity);
+      const spentEntry = spentList.find(e => e.userId === target.id);
+      const spent = spentEntry ? spentEntry.spent : 0;
+
       const embed = new EmbedBuilder()
         .setTitle('💎 Zenix Points Balance')
         .setThumbnail(target.displayAvatarURL())
         .addFields(
-          { name: '👤 User',         value: `<@${target.id}>`,                  inline: true },
-          { name: '💎 Zenix Points', value: `**${balance.toLocaleString()}** ZP`, inline: true },
-          { name: '\u200b',          value: '\u200b',                             inline: true },
-          { name: '🇧🇩 TAKA Value', value: `৳ ${toTaka(balance)}`,              inline: true },
-          { name: '💵 USD Value',    value: `$${toUSD(balance)}`,                 inline: true },
-          { name: '\u200b',          value: '\u200b',                             inline: true },
+          { name: '👤 User',          value: `<@${target.id}>`,                   inline: true },
+          { name: '💎 Zenix Points',  value: `**${balance.toLocaleString()}** ZP`, inline: true },
+          { name: '\u200b',           value: '\u200b',                              inline: true },
+          { name: '🇧🇩 TAKA Value',  value: `৳ ${toTaka(balance)}`,               inline: true },
+          { name: '💵 USD Value',     value: `${toUSD(balance)}`,                  inline: true },
+          { name: '\u200b',           value: '\u200b',                              inline: true },
+          { name: '🛒 Total Spent',   value: `**${spent.toLocaleString()}** ZP`,   inline: true },
+          { name: '🇧🇩 Spent TAKA',  value: `৳ ${toTaka(spent)}`,                 inline: true },
+          { name: '💵 Spent USD',     value: `${toUSD(spent)}`,                   inline: true },
         )
         .setDescription('**Rate:** 1 ZP = ৳1 TAKA = $0.0070')
         .setColor(0x010101)
