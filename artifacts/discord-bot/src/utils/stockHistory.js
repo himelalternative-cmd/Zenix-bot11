@@ -70,7 +70,10 @@ function getSpentLeaderboard(guildId, limit = 10) {
   const entries = load()[guildId]?.entries ?? [];
   const totals  = {};
   for (const e of entries) {
-    totals[e.userId] = (totals[e.userId] || 0) + (e.totalCost || 0);
+    if (!e.userId) continue;                        // skip malformed rows
+    const cost = Number(e.totalCost);
+    if (!isFinite(cost) || cost <= 0) continue;    // skip non-numeric / zero
+    totals[e.userId] = (totals[e.userId] || 0) + cost;
   }
   return Object.entries(totals)
     .map(([userId, spent]) => ({ userId, spent }))
