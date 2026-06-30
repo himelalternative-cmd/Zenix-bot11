@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, ChannelType } = require('discord.js');
 const { getGuildSettings, saveGuildSettings, resolveColor, COLOR_MAP } = require('../utils/settings');
 
 function itemName(item) {
@@ -52,6 +52,7 @@ module.exports = {
       sub.setName('buy-channel').setDescription('Set or remove the channel where /buy is allowed (tickets are always allowed)')
         .addChannelOption(opt =>
           opt.setName('channel').setDescription('The channel to allow /buy in (leave empty to remove restriction)').setRequired(false)
+            .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         )
     )
 
