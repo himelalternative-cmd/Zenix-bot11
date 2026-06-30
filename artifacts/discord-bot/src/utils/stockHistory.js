@@ -58,7 +58,8 @@ function setLogChannel(guildId, channelId) {
  */
 function getHistory(guildId, { page = 1, perPage = 10, userId = null } = {}) {
   const all     = load();
-  let entries   = (all[guildId]?.entries ?? []).slice().reverse(); // newest first
+  // only show purchase entries — give events share the same array but must not appear here
+  let entries   = (all[guildId]?.entries ?? []).filter(e => e.type !== 'give').slice().reverse(); // newest first
   if (userId) entries = entries.filter(e => e.userId === userId);
   const total   = entries.length;
   const sliced  = entries.slice((page - 1) * perPage, page * perPage);
