@@ -60,4 +60,22 @@ function clearHistory(guildId) {
   save(all);
 }
 
-module.exports = { logPurchase, getLogChannel, setLogChannel, getHistory, clearHistory };
+/**
+ * Get top spenders for a guild, sorted by total ZP spent.
+ * @param {string} guildId
+ * @param {number} limit
+ * @returns {{ userId: string, spent: number }[]}
+ */
+function getSpentLeaderboard(guildId, limit = 10) {
+  const entries = load()[guildId]?.entries ?? [];
+  const totals  = {};
+  for (const e of entries) {
+    totals[e.userId] = (totals[e.userId] || 0) + (e.totalCost || 0);
+  }
+  return Object.entries(totals)
+    .map(([userId, spent]) => ({ userId, spent }))
+    .sort((a, b) => b.spent - a.spent)
+    .slice(0, limit);
+}
+
+module.exports = { logPurchase, getLogChannel, setLogChannel, getHistory, clearHistory, getSpentLeaderboard };
