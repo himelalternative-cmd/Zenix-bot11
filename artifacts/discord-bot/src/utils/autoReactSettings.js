@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, '../../data');
-const FILE = path.join(DATA_DIR, 'autoreact.json');
+const DATA_DIR = require('./dataDir');
+const FILE = require('path').join(DATA_DIR, 'autoreact.json');
 
 function load() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_PATH = path.join(__dirname, '../../data/guild-settings.json');
+const DATA_DIR  = require('./dataDir');
+const DATA_PATH = require('path').join(DATA_DIR, 'guild-settings.json');
 const TMP_PATH  = DATA_PATH + '.tmp';
 
 // ── In-memory cache (single source of truth) ──────────────────────────────────

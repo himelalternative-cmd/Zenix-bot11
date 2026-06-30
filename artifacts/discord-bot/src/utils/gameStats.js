@@ -1,7 +1,8 @@
 const fs   = require('fs');
 const path = require('path');
 
-const FILE = path.join(__dirname, '../../data/game-stats.json');
+const DATA_DIR = require('./dataDir');
+const FILE = require('path').join(DATA_DIR, 'game-stats.json');
 
 const RANKS = [
   { min: 0,  name: 'Bronze',   emoji: '🥉', color: 0xcd7f32 },

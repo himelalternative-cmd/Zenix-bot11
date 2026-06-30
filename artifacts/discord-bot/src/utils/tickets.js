@@ -5,7 +5,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const TICKETS_FILE = path.join(__dirname, '../../data/tickets.json');
+const DATA_DIR     = require('./dataDir');
+const TICKETS_FILE = require('path').join(DATA_DIR, 'tickets.json');
 
 function load() {
   try {

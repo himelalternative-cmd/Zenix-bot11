@@ -1,7 +1,8 @@
 const fs   = require('fs');
 const path = require('path');
 
-const FILE = path.join(__dirname, '../../data/zenix-points.json');
+const DATA_DIR = require('./dataDir');
+const FILE = require('path').join(DATA_DIR, 'zenix-points.json');
 
 // Conversion rates
 const TAKA_PER_POINT = 1;       // 1 Zenix Point = 1 TAKA

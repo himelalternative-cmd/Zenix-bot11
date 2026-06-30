@@ -1,7 +1,8 @@
 const fs   = require('fs');
 const path = require('path');
 
-const FILE = path.join(__dirname, '../../data/antinuke-settings.json');
+const DATA_DIR = require('./dataDir');
+const FILE = require('path').join(DATA_DIR, 'antinuke-settings.json');
 
 const DEFAULTS = {
   enabled:      false,
