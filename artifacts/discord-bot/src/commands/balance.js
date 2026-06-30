@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getBalance, addBalance, removeBalance, toTaka, toUSD, getLeaderboard } = require('../utils/zenixPoints');
-const { getSpentLeaderboard } = require('../utils/stockHistory');
+const { getSpentLeaderboard, logGive } = require('../utils/stockHistory');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -74,6 +74,9 @@ module.exports = {
 
       removeBalance(interaction.user.id, amount);
       const theirBal = addBalance(target.id, amount);
+      if (interaction.guildId) {
+        logGive(interaction.guildId, { userId: interaction.user.id, amount, timestamp: new Date().toISOString() });
+      }
 
       const embed = new EmbedBuilder()
         .setTitle('💸 Zenix Points Transferred')

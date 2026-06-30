@@ -23,7 +23,19 @@ function save(data) {
 function logPurchase(guildId, entry) {
   const all = load();
   if (!all[guildId]) all[guildId] = { logChannelId: null, entries: [] };
-  all[guildId].entries.push(entry);
+  all[guildId].entries.push({ type: 'purchase', ...entry });
+  save(all);
+}
+
+/**
+ * Log a /give transfer as a spend event.
+ * @param {string} guildId
+ * @param {{ userId: string, amount: number, timestamp: string }} entry
+ */
+function logGive(guildId, entry) {
+  const all = load();
+  if (!all[guildId]) all[guildId] = { logChannelId: null, entries: [] };
+  all[guildId].entries.push({ type: 'give', ...entry });
   save(all);
 }
 
@@ -70,9 +82,11 @@ function getSpentLeaderboard(guildId, limit = 10) {
   const entries = load()[guildId]?.entries ?? [];
   const totals  = {};
   for (const e of entries) {
-    if (!e.userId) continue;                        // skip malformed rows
-    const cost = Number(e.totalCost);
-    if (!isFinite(cost) || cost <= 0) continue;    // skip non-numeric / zero
+    if (!e.userId) continue;                          // skip malformed rows
+    // purchases use totalCost; give entries use amount
+    const raw  = e.type === 'give' ? e.amount : e.totalCost;
+    const cost = Number(raw);
+    if (!isFinite(cost) || cost <= 0) continue;      // skip non-numeric / zero
     totals[e.userId] = (totals[e.userId] || 0) + cost;
   }
   return Object.entries(totals)
@@ -81,4 +95,4 @@ function getSpentLeaderboard(guildId, limit = 10) {
     .slice(0, limit);
 }
 
-module.exports = { logPurchase, getLogChannel, setLogChannel, getHistory, clearHistory, getSpentLeaderboard };
+module.exports = { logPurchase, logGive, getLogChannel, setLogChannel, getHistory, clearHistory, getSpentLeaderboard };

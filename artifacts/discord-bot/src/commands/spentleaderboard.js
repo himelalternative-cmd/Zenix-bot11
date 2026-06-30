@@ -38,7 +38,7 @@ module.exports = {
         value:  `<@${top.userId}> with **${top.spent.toLocaleString()} ZP** (৳${toTaka(top.spent)} / $${toUSD(top.spent)})`,
         inline: false,
       })
-      .setFooter({ text: 'Only counts /buy purchases • Powered by Zenix Realm' })
+      .setFooter({ text: 'Counts /buy purchases + /balance give • Powered by Zenix Realm' })
       .setTimestamp();
 
     return interaction.editReply({ embeds: [embed] });
