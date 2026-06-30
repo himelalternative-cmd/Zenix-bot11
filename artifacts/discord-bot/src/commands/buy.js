@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { getGuildSettings, saveGuildSettings, getSettings, generateOrderId } = require('../utils/settings');
 const { getBalance, removeBalance, toTaka, toUSD } = require('../utils/zenixPoints');
 const { logPurchase, getLogChannel } = require('../utils/stockHistory');
+const { getOwnerByChannel } = require('../utils/tickets');
 
 function itemName(item) {
   return typeof item === 'string' ? item : item.name;
@@ -52,9 +53,23 @@ module.exports = {
 
   async execute(interaction) {
     const settings = getGuildSettings(interaction.guildId);
-    const items    = settings.items || [];
-    const chosen   = interaction.options.getString('item').trim();
-    const amount   = interaction.options.getInteger('amount') ?? 1;
+
+    // ── Channel restriction ───────────────────────────────────────────────────
+    const allowedChannelId = settings.buyChannelId;
+    if (allowedChannelId) {
+      const isAllowedChannel = interaction.channelId === allowedChannelId;
+      const isTicket         = getOwnerByChannel(interaction.channelId) !== null;
+      if (!isAllowedChannel && !isTicket) {
+        return interaction.reply({
+          content: `❌ You can only use **/buy** in <#${allowedChannelId}> or inside a ticket.`,
+          ephemeral: true,
+        });
+      }
+    }
+
+    const items  = settings.items || [];
+    const chosen = interaction.options.getString('item').trim();
+    const amount = interaction.options.getInteger('amount') ?? 1;
 
     // ── Find item ────────────────────────────────────────────────────────────
     const idx = items.findIndex(i => itemName(i).toLowerCase() === chosen.toLowerCase());

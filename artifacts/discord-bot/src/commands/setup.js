@@ -47,6 +47,14 @@ module.exports = {
         )
     )
 
+    // ── buy-channel ───────────────────────────────────────────────────────────
+    .addSubcommand(sub =>
+      sub.setName('buy-channel').setDescription('Set or remove the channel where /buy is allowed (tickets are always allowed)')
+        .addChannelOption(opt =>
+          opt.setName('channel').setDescription('The channel to allow /buy in (leave empty to remove restriction)').setRequired(false)
+        )
+    )
+
     // ── item group ────────────────────────────────────────────────────────────
     .addSubcommandGroup(group =>
       group.setName('item').setDescription('Manage shop items')
@@ -185,6 +193,26 @@ module.exports = {
         ].filter(Boolean).join('\n'),
         ephemeral: true,
       });
+    }
+
+    // ── buy-channel ────────────────────────────────────────────────────────────
+    if (sub === 'buy-channel') {
+      const channel = interaction.options.getChannel('channel');
+      if (channel) {
+        settings.buyChannelId = channel.id;
+        saveGuildSettings(interaction.guildId, settings);
+        return interaction.reply({
+          content: `✅ **/buy** is now restricted to <#${channel.id}> and ticket channels.\nUsers who try to use it elsewhere will be blocked.`,
+          ephemeral: true,
+        });
+      } else {
+        delete settings.buyChannelId;
+        saveGuildSettings(interaction.guildId, settings);
+        return interaction.reply({
+          content: `✅ **/buy** channel restriction removed — it can now be used anywhere.`,
+          ephemeral: true,
+        });
+      }
     }
 
     // ── item group ─────────────────────────────────────────────────────────────
