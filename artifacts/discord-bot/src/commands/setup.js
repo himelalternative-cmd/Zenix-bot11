@@ -8,19 +8,19 @@ function itemName(item) {
   return typeof item === 'string' ? item : item.name;
 }
 
-// ── Pending item-add map ───────────────────────────────────────────────────────
-// Keyed by nonce; cleaned up after 10 minutes so memory doesn't leak if the
-// admin dismisses the modal without submitting.
-const _pendingItemAdds = new Map(); // nonce → { guildId, name, price, expiresAt }
+// ── Pending setup-modal map ────────────────────────────────────────────────────
+// Generic nonce store for any setup modal (item add, buy-dm, dm-message).
+// Entries expire after 10 minutes to prevent memory leaks on dismissed modals.
+const _pendingSetup = new Map(); // nonce → { type, ...data, expiresAt }
 
-function _addPending(guildId, name, price) {
+function _addSetupPending(data) {
   const nonce = Math.random().toString(36).slice(2, 10); // 8-char alphanumeric
   const expiresAt = Date.now() + 10 * 60 * 1000;
-  _pendingItemAdds.set(nonce, { guildId, name, price, expiresAt });
   // Lazy cleanup of expired entries
-  for (const [k, v] of _pendingItemAdds) {
-    if (v.expiresAt < Date.now()) _pendingItemAdds.delete(k);
+  for (const [k, v] of _pendingSetup) {
+    if (v.expiresAt < Date.now()) _pendingSetup.delete(k);
   }
+  _pendingSetup.set(nonce, { ...data, expiresAt });
   return nonce;
 }
 
@@ -30,14 +30,14 @@ function _addPending(guildId, name, price) {
  */
 async function handleSetupItemAddModal(interaction) {
   const nonce   = interaction.customId.split('|')[1];
-  const pending = _pendingItemAdds.get(nonce);
+  const pending = _pendingSetup.get(nonce);
 
   if (!pending || pending.expiresAt < Date.now()) {
-    _pendingItemAdds.delete(nonce);
+    _pendingSetup.delete(nonce);
     return interaction.reply({ content: '❌ This item-add session has expired. Please run `/setup item add` again.', ephemeral: true });
   }
 
-  _pendingItemAdds.delete(nonce);
+  _pendingSetup.delete(nonce);
   const { guildId, name, price } = pending;
 
   const dmMsg    = interaction.fields.getTextInputValue('item_dm_message').trim();
@@ -64,6 +64,76 @@ async function handleSetupItemAddModal(interaction) {
   });
 }
 
+/**
+ * Handle the modal submitted after /setup buy-dm.
+ * customId format: setup_buy_dm_modal|<nonce>
+ */
+async function handleBuyDmModal(interaction) {
+  const nonce   = interaction.customId.split('|')[1];
+  const pending = _pendingSetup.get(nonce);
+
+  if (!pending || pending.expiresAt < Date.now()) {
+    _pendingSetup.delete(nonce);
+    return interaction.reply({ content: '❌ This session expired. Please run `/setup buy-dm` again.', ephemeral: true });
+  }
+
+  _pendingSetup.delete(nonce);
+  const { guildId, colorChoice } = pending;
+
+  const message = interaction.fields.getTextInputValue('buy_dm_message').trim();
+  const footer  = interaction.fields.getTextInputValue('buy_dm_footer').trim();
+
+  if (!message) return interaction.reply({ content: '❌ Message cannot be empty.', ephemeral: true });
+
+  const settings = getGuildSettings(guildId);
+  settings.buyDmMessage = message;
+  if (footer)       settings.buyDmFooter = footer;
+  if (colorChoice)  settings.buyDmColor  = resolveColor(colorChoice);
+  saveGuildSettings(guildId, settings);
+
+  return interaction.reply({
+    content: [
+      `✅ Buy DM set.`,
+      `> **Message:** ${message.slice(0, 200)}${message.length > 200 ? '…' : ''}`,
+      footer ? `> **Footer:** ${footer.slice(0, 100)}` : '',
+      ``,
+      `Placeholders: \`{item}\` \`{amount}\` \`{price}\``,
+    ].filter(Boolean).join('\n'),
+    ephemeral: true,
+  });
+}
+
+/**
+ * Handle the modal submitted after /setup dm-message.
+ * customId format: setup_dm_message_modal|<nonce>
+ */
+async function handleDmMessageModal(interaction) {
+  const nonce   = interaction.customId.split('|')[1];
+  const pending = _pendingSetup.get(nonce);
+
+  if (!pending || pending.expiresAt < Date.now()) {
+    _pendingSetup.delete(nonce);
+    return interaction.reply({ content: '❌ This session expired. Please run `/setup dm-message` again.', ephemeral: true });
+  }
+
+  _pendingSetup.delete(nonce);
+  const { guildId, embed, colorChoice } = pending;
+
+  const message = interaction.fields.getTextInputValue('dm_msg_text').trim();
+  if (!message) return interaction.reply({ content: '❌ Message cannot be empty.', ephemeral: true });
+
+  const settings = getGuildSettings(guildId);
+  settings.dmMessage = message;
+  settings.dmEmbed   = embed;
+  if (colorChoice) settings.dmColor = resolveColor(colorChoice);
+  saveGuildSettings(guildId, settings);
+
+  return interaction.reply({
+    content: `✅ DM message configured.${embed ? ' Will be sent as an embed.' : ''}`,
+    ephemeral: true,
+  });
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setup')
@@ -77,9 +147,9 @@ module.exports = {
     )
 
     // ── dm-message ────────────────────────────────────────────────────────────
+    // message is now collected via a modal (supports Shift+Enter multi-line)
     .addSubcommand(sub =>
       sub.setName('dm-message').setDescription('Configure the DM sent to buyers after an order')
-        .addStringOption(opt => opt.setName('message').setDescription('DM message text').setRequired(true))
         .addBooleanOption(opt => opt.setName('embed').setDescription('Send DM as embed? (default: false)'))
         .addStringOption(opt =>
           opt.setName('color').setDescription('DM embed color')
@@ -88,18 +158,9 @@ module.exports = {
     )
 
     // ── buy-dm ────────────────────────────────────────────────────────────────
+    // message & footer are now collected via a modal (supports Shift+Enter multi-line)
     .addSubcommand(sub =>
-      sub.setName('buy-dm').setDescription('Set the DM header sent to buyers after a shop purchase')
-        .addStringOption(opt =>
-          opt.setName('message')
-            .setDescription('Header text. Use {item}, {amount}, {price} as placeholders.')
-            .setRequired(true)
-        )
-        .addStringOption(opt =>
-          opt.setName('footer')
-            .setDescription('Footer text shown below the keys (e.g. "Enjoy! Please Vouch 🎁")')
-            .setRequired(false)
-        )
+      sub.setName('buy-dm').setDescription('Set the DM sent to buyers after a shop purchase')
         .addStringOption(opt =>
           opt.setName('color').setDescription('Embed color')
             .addChoices(...Object.keys(COLOR_MAP).map(c => ({ name: c, value: c })))
@@ -224,35 +285,56 @@ module.exports = {
 
     // ── dm-message ─────────────────────────────────────────────────────────────
     if (sub === 'dm-message') {
-      const message     = interaction.options.getString('message');
       const embed       = interaction.options.getBoolean('embed') ?? false;
       const colorChoice = interaction.options.getString('color');
-      settings.dmMessage = message;
-      settings.dmEmbed   = embed;
-      if (colorChoice) settings.dmColor = resolveColor(colorChoice);
-      saveGuildSettings(interaction.guildId, settings);
-      return interaction.reply({ content: `✅ DM message configured.${embed ? ' Will be sent as an embed.' : ''}`, ephemeral: true });
+      const nonce = _addSetupPending({ guildId: interaction.guildId, embed, colorChoice });
+
+      const modal = new ModalBuilder()
+        .setCustomId(`setup_dm_message_modal|${nonce}`)
+        .setTitle('Configure Order DM Message');
+
+      const msgInput = new TextInputBuilder()
+        .setCustomId('dm_msg_text')
+        .setLabel('DM message sent to buyers after an order')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Your order is confirmed! Thank you for your purchase.')
+        .setRequired(true)
+        .setMaxLength(1500);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(msgInput));
+      return interaction.showModal(modal);
     }
 
     // ── buy-dm ─────────────────────────────────────────────────────────────────
     if (sub === 'buy-dm') {
-      const message     = interaction.options.getString('message');
-      const footer      = interaction.options.getString('footer');
       const colorChoice = interaction.options.getString('color');
-      settings.buyDmMessage = message;
-      if (footer      !== null) settings.buyDmFooter = footer;
-      if (colorChoice !== null) settings.buyDmColor  = resolveColor(colorChoice);
-      saveGuildSettings(interaction.guildId, settings);
-      return interaction.reply({
-        content: [
-          `✅ Buy DM header set.`,
-          `> **Header:** ${message}`,
-          footer ? `> **Footer:** ${footer}` : '',
-          ``,
-          `Placeholders: \`{item}\` \`{amount}\` \`{price}\``,
-        ].filter(Boolean).join('\n'),
-        ephemeral: true,
-      });
+      const nonce = _addSetupPending({ guildId: interaction.guildId, colorChoice });
+
+      const modal = new ModalBuilder()
+        .setCustomId(`setup_buy_dm_modal|${nonce}`)
+        .setTitle('Configure Shop Purchase DM');
+
+      const msgInput = new TextInputBuilder()
+        .setCustomId('buy_dm_message')
+        .setLabel('Message header (use {item}, {amount}, {price})')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Thank You For Your Purchase!\nHere is your {amount} {item}')
+        .setRequired(true)
+        .setMaxLength(1000);
+
+      const footerInput = new TextInputBuilder()
+        .setCustomId('buy_dm_footer')
+        .setLabel('Footer text (shown below the keys)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Enjoy! Please Vouch if everything is ok. 🎁')
+        .setRequired(false)
+        .setMaxLength(200);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(msgInput),
+        new ActionRowBuilder().addComponents(footerInput),
+      );
+      return interaction.showModal(modal);
     }
 
     // ── buy-channel ────────────────────────────────────────────────────────────
@@ -287,7 +369,7 @@ module.exports = {
         }
 
         // Show a modal to collect the per-item DM message
-        const nonce = _addPending(interaction.guildId, name, price);
+        const nonce = _addSetupPending({ guildId: interaction.guildId, name, price });
         const modal = new ModalBuilder()
           .setCustomId(`setup_item_add_modal|${nonce}`)
           .setTitle(`DM Message — ${name.length > 30 ? name.slice(0, 30) + '…' : name}`);
@@ -436,3 +518,5 @@ module.exports = {
 };
 
 module.exports.handleSetupItemAddModal = handleSetupItemAddModal;
+module.exports.handleBuyDmModal        = handleBuyDmModal;
+module.exports.handleDmMessageModal    = handleDmMessageModal;

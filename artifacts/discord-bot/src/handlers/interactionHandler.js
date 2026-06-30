@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { handlePayButton, handleTrxModal, handlePayConfirm, handlePayConfirmModal, handlePayReject, handleRejectModal } = require('./payHandler');
-const { handleSetupItemAddModal } = require('../commands/setup');
+const { handleSetupItemAddModal, handleBuyDmModal, handleDmMessageModal } = require('../commands/setup');
 const { handleVerifyButton, handleVerifyCaptcha } = require('./verifyHandler');
 const { handleGameInteraction, isGameInteraction } = require('./gameHandler');
 const {
@@ -127,6 +127,8 @@ async function handleInteraction(client, interaction) {
     if (interaction.customId.startsWith('pay_reject_modal'))  return handleRejectModal(interaction);
     if (interaction.customId.startsWith('dm_modal'))               return handleDmModal(interaction);
     if (interaction.customId.startsWith('setup_item_add_modal|'))  return handleSetupItemAddModal(interaction);
+    if (interaction.customId.startsWith('setup_buy_dm_modal|'))    return handleBuyDmModal(interaction);
+    if (interaction.customId.startsWith('setup_dm_message_modal|')) return handleDmMessageModal(interaction);
     return;
   }
 }
