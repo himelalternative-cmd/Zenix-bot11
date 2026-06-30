@@ -233,8 +233,8 @@ module.exports = {
       // Build the key list
       const keyLines = delivered.map((code, i) => `Key ${i + 1} - ${code}`).join('\n');
 
-      // Header line from admin config (or a sensible default)
-      const headerTemplate = settings.buyDmMessage || `Thank You For Your Purchase!\nHere is your {amount} {item}`;
+      // Per-item DM message takes priority over the global buy-dm setting
+      const headerTemplate = itemEntry.dmMessage || settings.buyDmMessage || `Thank You For Your Purchase!\nHere is your {amount} {item}`;
       const headerText     = fillPlaceholders(headerTemplate, name, amount, totalCost);
 
       // Footer line from admin config (or default)

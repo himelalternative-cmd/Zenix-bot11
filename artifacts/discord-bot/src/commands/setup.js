@@ -1,8 +1,51 @@
-const { SlashCommandBuilder, ChannelType } = require('discord.js');
+const {
+  SlashCommandBuilder, ChannelType,
+  ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder,
+} = require('discord.js');
 const { getGuildSettings, saveGuildSettings, resolveColor, COLOR_MAP } = require('../utils/settings');
 
 function itemName(item) {
   return typeof item === 'string' ? item : item.name;
+}
+
+/**
+ * Handle the modal submitted after /setup item add.
+ * customId format: setup_item_add_modal|guildId|price|name
+ * (name is last so it can contain | characters)
+ */
+async function handleSetupItemAddModal(interaction) {
+  const raw       = interaction.customId; // setup_item_add_modal|guildId|price|name
+  const firstPipe = raw.indexOf('|');
+  const rest      = raw.slice(firstPipe + 1);              // guildId|price|name
+  const p2        = rest.indexOf('|');
+  const guildId   = rest.slice(0, p2);                     // guildId
+  const rest2     = rest.slice(p2 + 1);                    // price|name
+  const p3        = rest2.indexOf('|');
+  const price     = parseInt(rest2.slice(0, p3), 10);      // price
+  const name      = rest2.slice(p3 + 1);                   // name (may contain |)
+
+  const dmMsg    = interaction.fields.getTextInputValue('item_dm_message').trim();
+  const settings = getGuildSettings(guildId);
+  if (!settings.items) settings.items = [];
+
+  if (settings.items.some(i => itemName(i).toLowerCase() === name.toLowerCase())) {
+    return interaction.reply({ content: `⚠️ Item \`${name}\` already exists.`, ephemeral: true });
+  }
+
+  const itemObj = { name, price, stock: [] };
+  if (dmMsg) itemObj.dmMessage = dmMsg;
+
+  settings.items.push(itemObj);
+  saveGuildSettings(guildId, settings);
+
+  const dmLine = dmMsg
+    ? `📨 **Custom DM message saved.**\n> ${dmMsg.slice(0, 120)}${dmMsg.length > 120 ? '…' : ''}`
+    : `ℹ️ No custom DM set — will use the global \`/setup buy-dm\` message.`;
+
+  return interaction.reply({
+    content: `✅ Added **${name}** to the shop for **${price.toLocaleString()} ZP**.\n${dmLine}\n\nUse \`/setup stock add\` to load delivery codes.`,
+    ephemeral: true,
+  });
 }
 
 module.exports = {
@@ -226,9 +269,22 @@ module.exports = {
         if (settings.items.some(i => itemName(i).toLowerCase() === name.toLowerCase())) {
           return interaction.reply({ content: `⚠️ Item \`${name}\` already exists. Remove it first to update its price.`, ephemeral: true });
         }
-        settings.items.push({ name, price, stock: [] });
-        saveGuildSettings(interaction.guildId, settings);
-        return interaction.reply({ content: `✅ Added **${name}** to the shop for **${price.toLocaleString()} ZP**.\nUse \`/setup stock add\` to load delivery codes.`, ephemeral: true });
+
+        // Show a modal to collect the per-item DM message
+        const modal = new ModalBuilder()
+          .setCustomId(`setup_item_add_modal|${interaction.guildId}|${price}|${name}`)
+          .setTitle(`DM Message — ${name.length > 30 ? name.slice(0, 30) + '…' : name}`);
+
+        const dmInput = new TextInputBuilder()
+          .setCustomId('item_dm_message')
+          .setLabel('Bot DM when buyer purchases this item')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('e.g. Thanks for buying {item}! Here is your key. Enjoy 🎁\n\nLeave blank to use the global /setup buy-dm message.')
+          .setRequired(false)
+          .setMaxLength(1000);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(dmInput));
+        return interaction.showModal(modal);
       }
 
       if (sub === 'remove') {
@@ -361,3 +417,5 @@ module.exports = {
     }
   },
 };
+
+module.exports.handleSetupItemAddModal = handleSetupItemAddModal;
