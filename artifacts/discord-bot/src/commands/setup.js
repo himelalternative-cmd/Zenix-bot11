@@ -65,45 +65,6 @@ async function handleSetupItemAddModal(interaction) {
 }
 
 /**
- * Handle the modal submitted after /setup buy-dm.
- * customId format: setup_buy_dm_modal|<nonce>
- */
-async function handleBuyDmModal(interaction) {
-  const nonce   = interaction.customId.split('|')[1];
-  const pending = _pendingSetup.get(nonce);
-
-  if (!pending || pending.expiresAt < Date.now()) {
-    _pendingSetup.delete(nonce);
-    return interaction.reply({ content: '❌ This session expired. Please run `/setup buy-dm` again.', ephemeral: true });
-  }
-
-  _pendingSetup.delete(nonce);
-  const { guildId, colorChoice } = pending;
-
-  const message = interaction.fields.getTextInputValue('buy_dm_message').trim();
-  const footer  = interaction.fields.getTextInputValue('buy_dm_footer').trim();
-
-  if (!message) return interaction.reply({ content: '❌ Message cannot be empty.', ephemeral: true });
-
-  const settings = getGuildSettings(guildId);
-  settings.buyDmMessage = message;
-  if (footer)       settings.buyDmFooter = footer;
-  if (colorChoice)  settings.buyDmColor  = resolveColor(colorChoice);
-  saveGuildSettings(guildId, settings);
-
-  return interaction.reply({
-    content: [
-      `✅ Buy DM set.`,
-      `> **Message:** ${message.slice(0, 200)}${message.length > 200 ? '…' : ''}`,
-      footer ? `> **Footer:** ${footer.slice(0, 100)}` : '',
-      ``,
-      `Placeholders: \`{item}\` \`{amount}\` \`{price}\``,
-    ].filter(Boolean).join('\n'),
-    ephemeral: true,
-  });
-}
-
-/**
  * Handle the modal submitted after /setup dm-message.
  * customId format: setup_dm_message_modal|<nonce>
  */
@@ -135,6 +96,8 @@ async function handleDmMessageModal(interaction) {
 }
 
 module.exports = {
+  handleSetupItemAddModal,
+  handleDmMessageModal,
   data: new SlashCommandBuilder()
     .setName('setup')
     .setDescription('Configure the bot')
@@ -153,16 +116,6 @@ module.exports = {
         .addBooleanOption(opt => opt.setName('embed').setDescription('Send DM as embed? (default: false)'))
         .addStringOption(opt =>
           opt.setName('color').setDescription('DM embed color')
-            .addChoices(...Object.keys(COLOR_MAP).map(c => ({ name: c, value: c })))
-        )
-    )
-
-    // ── buy-dm ────────────────────────────────────────────────────────────────
-    // message & footer are now collected via a modal (supports Shift+Enter multi-line)
-    .addSubcommand(sub =>
-      sub.setName('buy-dm').setDescription('Set the DM sent to buyers after a shop purchase')
-        .addStringOption(opt =>
-          opt.setName('color').setDescription('Embed color')
             .addChoices(...Object.keys(COLOR_MAP).map(c => ({ name: c, value: c })))
         )
     )
@@ -302,38 +255,6 @@ module.exports = {
         .setMaxLength(1500);
 
       modal.addComponents(new ActionRowBuilder().addComponents(msgInput));
-      return interaction.showModal(modal);
-    }
-
-    // ── buy-dm ─────────────────────────────────────────────────────────────────
-    if (sub === 'buy-dm') {
-      const colorChoice = interaction.options.getString('color');
-      const nonce = _addSetupPending({ guildId: interaction.guildId, colorChoice });
-
-      const modal = new ModalBuilder()
-        .setCustomId(`setup_buy_dm_modal|${nonce}`)
-        .setTitle('Configure Shop Purchase DM');
-
-      const msgInput = new TextInputBuilder()
-        .setCustomId('buy_dm_message')
-        .setLabel('Message header (use {item}, {amount}, {price})')
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder('Thank You For Your Purchase!\nHere is your {amount} {item}')
-        .setRequired(true)
-        .setMaxLength(1000);
-
-      const footerInput = new TextInputBuilder()
-        .setCustomId('buy_dm_footer')
-        .setLabel('Footer text (shown below the keys)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Enjoy! Please Vouch if everything is ok. 🎁')
-        .setRequired(false)
-        .setMaxLength(200);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(msgInput),
-        new ActionRowBuilder().addComponents(footerInput),
-      );
       return interaction.showModal(modal);
     }
 
