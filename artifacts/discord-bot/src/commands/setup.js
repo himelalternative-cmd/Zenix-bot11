@@ -9,59 +9,17 @@ function itemName(item) {
 }
 
 // ── Pending setup-modal map ────────────────────────────────────────────────────
-// Generic nonce store for any setup modal (item add, buy-dm, dm-message).
-// Entries expire after 10 minutes to prevent memory leaks on dismissed modals.
-const _pendingSetup = new Map(); // nonce → { type, ...data, expiresAt }
+// Used only for the dm-message modal (not item add anymore).
+const _pendingSetup = new Map();
 
 function _addSetupPending(data) {
-  const nonce = Math.random().toString(36).slice(2, 10); // 8-char alphanumeric
+  const nonce = Math.random().toString(36).slice(2, 10);
   const expiresAt = Date.now() + 10 * 60 * 1000;
-  // Lazy cleanup of expired entries
   for (const [k, v] of _pendingSetup) {
     if (v.expiresAt < Date.now()) _pendingSetup.delete(k);
   }
   _pendingSetup.set(nonce, { ...data, expiresAt });
   return nonce;
-}
-
-/**
- * Handle the modal submitted after /setup item add.
- * customId format: setup_item_add_modal|<nonce>
- */
-async function handleSetupItemAddModal(interaction) {
-  const nonce   = interaction.customId.split('|')[1];
-  const pending = _pendingSetup.get(nonce);
-
-  if (!pending || pending.expiresAt < Date.now()) {
-    _pendingSetup.delete(nonce);
-    return interaction.reply({ content: '❌ This item-add session has expired. Please run `/setup item add` again.', ephemeral: true });
-  }
-
-  _pendingSetup.delete(nonce);
-  const { guildId, name, price } = pending;
-
-  const dmMsg    = interaction.fields.getTextInputValue('item_dm_message').trim();
-  const settings = getGuildSettings(guildId);
-  if (!settings.items) settings.items = [];
-
-  if (settings.items.some(i => itemName(i).toLowerCase() === name.toLowerCase())) {
-    return interaction.reply({ content: `⚠️ Item \`${name}\` already exists.`, ephemeral: true });
-  }
-
-  const itemObj = { name, price, stock: [] };
-  if (dmMsg) itemObj.dmMessage = dmMsg;
-
-  settings.items.push(itemObj);
-  saveGuildSettings(guildId, settings);
-
-  const dmLine = dmMsg
-    ? `📨 **Custom DM message saved.**\n> ${dmMsg.slice(0, 120)}${dmMsg.length > 120 ? '…' : ''}`
-    : `ℹ️ No custom DM set — will use the global \`/setup buy-dm\` message.`;
-
-  return interaction.reply({
-    content: `✅ Added **${name}** to the shop for **${price.toLocaleString()} ZP**.\n${dmLine}\n\nUse \`/setup stock add\` to load delivery codes.`,
-    ephemeral: true,
-  });
 }
 
 /**
@@ -96,8 +54,8 @@ async function handleDmMessageModal(interaction) {
 }
 
 module.exports = {
-  handleSetupItemAddModal,
   handleDmMessageModal,
+
   data: new SlashCommandBuilder()
     .setName('setup')
     .setDescription('Configure the bot')
@@ -110,7 +68,6 @@ module.exports = {
     )
 
     // ── dm-message ────────────────────────────────────────────────────────────
-    // message is now collected via a modal (supports Shift+Enter multi-line)
     .addSubcommand(sub =>
       sub.setName('dm-message').setDescription('Configure the DM sent to buyers after an order')
         .addBooleanOption(opt => opt.setName('embed').setDescription('Send DM as embed? (default: false)'))
@@ -285,26 +242,18 @@ module.exports = {
       if (sub === 'add') {
         const name  = interaction.options.getString('name').trim();
         const price = interaction.options.getInteger('price');
+
         if (settings.items.some(i => itemName(i).toLowerCase() === name.toLowerCase())) {
           return interaction.reply({ content: `⚠️ Item \`${name}\` already exists. Remove it first to update its price.`, ephemeral: true });
         }
 
-        // Show a modal to collect the per-item DM message
-        const nonce = _addSetupPending({ guildId: interaction.guildId, name, price });
-        const modal = new ModalBuilder()
-          .setCustomId(`setup_item_add_modal|${nonce}`)
-          .setTitle(`DM Message — ${name.length > 30 ? name.slice(0, 30) + '…' : name}`);
+        settings.items.push({ name, price, stock: [] });
+        saveGuildSettings(interaction.guildId, settings);
 
-        const dmInput = new TextInputBuilder()
-          .setCustomId('item_dm_message')
-          .setLabel('Bot DM when buyer purchases this item')
-          .setStyle(TextInputStyle.Paragraph)
-          .setPlaceholder('e.g. Thanks for buying {item}! Here is your key. Enjoy 🎁\n\nLeave blank to use the global /setup buy-dm message.')
-          .setRequired(false)
-          .setMaxLength(1000);
-
-        modal.addComponents(new ActionRowBuilder().addComponents(dmInput));
-        return interaction.showModal(modal);
+        return interaction.reply({
+          content: `✅ Added **${name}** to the shop for **${price.toLocaleString()} ZP**.\n\nUse \`/setup stock add\` to load delivery codes.`,
+          ephemeral: true,
+        });
       }
 
       if (sub === 'remove') {
@@ -342,7 +291,6 @@ module.exports = {
       const entry = settings.items[idx];
       if (!entry.stock) entry.stock = [];
 
-      // ── add ────────────────────────────────────────────────────────────────
       if (sub === 'add') {
         const raw   = interaction.options.getString('code');
         const codes = raw.split(',').map(c => c.trim()).filter(c => c.length > 0);
@@ -357,12 +305,10 @@ module.exports = {
         });
       }
 
-      // ── view ───────────────────────────────────────────────────────────────
       if (sub === 'view') {
         if (!entry.stock.length) {
           return interaction.reply({ content: `📦 **${entry.name}** has no codes in stock.`, ephemeral: true });
         }
-        // Split into chunks of 20 to avoid Discord's 2000-char limit
         const lines  = entry.stock.map((code, i) => `\`${i + 1}.\` ${code}`);
         const chunks = [];
         for (let i = 0; i < lines.length; i += 20) chunks.push(lines.slice(i, i + 20));
@@ -375,7 +321,6 @@ module.exports = {
         return;
       }
 
-      // ── edit ───────────────────────────────────────────────────────────────
       if (sub === 'edit') {
         const num     = interaction.options.getInteger('number');
         const newCode = interaction.options.getString('code').trim();
@@ -396,7 +341,6 @@ module.exports = {
         });
       }
 
-      // ── remove-code ────────────────────────────────────────────────────────
       if (sub === 'remove-code') {
         const num = interaction.options.getInteger('number');
 
@@ -415,7 +359,6 @@ module.exports = {
         });
       }
 
-      // ── count ──────────────────────────────────────────────────────────────
       if (sub === 'count') {
         const n = entry.stock.length;
         return interaction.reply({
@@ -424,7 +367,6 @@ module.exports = {
         });
       }
 
-      // ── clear ──────────────────────────────────────────────────────────────
       if (sub === 'clear') {
         const removed = entry.stock.length;
         entry.stock   = [];
@@ -438,5 +380,4 @@ module.exports = {
   },
 };
 
-module.exports.handleSetupItemAddModal = handleSetupItemAddModal;
-module.exports.handleDmMessageModal    = handleDmMessageModal;
+module.exports.handleDmMessageModal = handleDmMessageModal;
