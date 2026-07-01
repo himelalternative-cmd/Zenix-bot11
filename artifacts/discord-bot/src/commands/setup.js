@@ -439,5 +439,4 @@ module.exports = {
 };
 
 module.exports.handleSetupItemAddModal = handleSetupItemAddModal;
-module.exports.handleBuyDmModal        = handleBuyDmModal;
 module.exports.handleDmMessageModal    = handleDmMessageModal;
