@@ -35,13 +35,20 @@ const CATEGORY_SLUGS = {
   others:        'ticket',
 };
 
+// ── Auto-delete timers (channelId → timeoutId) ────────────────────────────────
+// Stored in memory; cleared if ticket is manually deleted before 24 hrs.
+const _doneTimers = new Map();
+
+const DONE_AUTO_DELETE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 // ── Ticket action buttons ─────────────────────────────────────────────────────
-function ticketButtons(claimDisabled = false, closeDisabled = false) {
+function ticketButtons({ claimDisabled = false, closeDisabled = false, doneDisabled = false, claimLabel = 'Claim' } = {}) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Secondary).setDisabled(closeDisabled),
-    new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setEmoji('📌').setStyle(ButtonStyle.Primary).setDisabled(claimDisabled),
+    new ButtonBuilder().setCustomId('ticket_claim').setLabel(claimLabel).setEmoji('📌').setStyle(ButtonStyle.Primary).setDisabled(claimDisabled),
     new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setEmoji('📄').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji('🗑').setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji('🗑').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId('ticket_done').setLabel('Mark as Done').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(doneDisabled),
   );
 }
 
@@ -53,7 +60,6 @@ async function handleTicketSelect(interaction) {
 
 // ── Core ticket creation ──────────────────────────────────────────────────────
 async function createTicket(interaction, category) {
-  // Guard against already-acknowledged interactions
   try {
     await interaction.deferReply({ ephemeral: true });
   } catch {
@@ -64,19 +70,15 @@ async function createTicket(interaction, category) {
   const guild  = interaction.guild;
   const user   = interaction.user;
 
-  // Prevent duplicate open tickets
   const existingId = getTicket(user.id);
   if (existingId) {
     const existing = guild.channels.cache.get(existingId);
     if (existing) {
       return interaction.editReply({ content: `❌ You already have an open ticket: ${existing}` });
     }
-    removeTicket(user.id); // stale record — channel was deleted manually
+    removeTicket(user.id);
   }
 
-  // Permission overwrites — always include explicit `type` so discord.js
-  // never tries to cache-resolve the ID (avoids "not a cached User or Role")
-  // type 0 = Role, type 1 = Member/User
   const VIEW_SEND_READ = [
     PermissionFlagsBits.ViewChannel,
     PermissionFlagsBits.SendMessages,
@@ -84,11 +86,8 @@ async function createTicket(interaction, category) {
   ];
 
   const overwrites = [
-    // @everyone — hide channel from everyone
-    { id: guild.id, type: 0, deny: [PermissionFlagsBits.ViewChannel] },
-    // ticket opener
-    { id: user.id, type: 1, allow: VIEW_SEND_READ },
-    // guild owner
+    { id: guild.id,      type: 0, deny:  [PermissionFlagsBits.ViewChannel] },
+    { id: user.id,       type: 1, allow: VIEW_SEND_READ },
     { id: guild.ownerId, type: 1, allow: VIEW_SEND_READ },
   ];
 
@@ -96,7 +95,7 @@ async function createTicket(interaction, category) {
     overwrites.push({ id: staffRoleId, type: 0, allow: VIEW_SEND_READ });
   }
 
-  const slug = CATEGORY_SLUGS[category] ?? 'ticket';
+  const slug     = CATEGORY_SLUGS[category] ?? 'ticket';
   const safeName = user.username.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
 
   let channel;
@@ -158,11 +157,10 @@ async function handleTicketClose(interaction) {
     await channel.permissionOverwrites.edit(ownerId, { ViewChannel: true, SendMessages: false }).catch(() => {});
   }
 
-  // Disable Close button on original embed
   try {
-    const msgs = await channel.messages.fetch({ limit: 15 });
+    const msgs     = await channel.messages.fetch({ limit: 15 });
     const original = msgs.find(m => m.author.id === guild.members.me.id && m.components.length > 0);
-    if (original) await original.edit({ components: [ticketButtons(false, true)] });
+    if (original) await original.edit({ components: [ticketButtons({ closeDisabled: true })] });
   } catch {}
 
   const embed = new EmbedBuilder()
@@ -180,23 +178,18 @@ async function handleTicketClose(interaction) {
 // ── Claim ─────────────────────────────────────────────────────────────────────
 async function handleTicketClaim(interaction) {
   const member = interaction.member;
-
   if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
     return interaction.reply({ content: '❌ Only administrators can claim tickets.', ephemeral: true });
   }
 
-  // Disable Claim button, label shows who claimed
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ticket_claim').setLabel(`Claimed by ${interaction.user.username}`).setEmoji('📌').setStyle(ButtonStyle.Success).setDisabled(true),
-    new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setEmoji('📄').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji('🗑').setStyle(ButtonStyle.Danger)
-  );
-
   try {
-    const msgs = await interaction.channel.messages.fetch({ limit: 15 });
+    const msgs     = await interaction.channel.messages.fetch({ limit: 15 });
     const original = msgs.find(m => m.author.id === interaction.guild.members.me.id && m.components.length > 0);
-    if (original) await original.edit({ components: [row] });
+    if (original) {
+      await original.edit({
+        components: [ticketButtons({ claimDisabled: true, claimLabel: `Claimed by ${interaction.user.username}` })],
+      });
+    }
   } catch {}
 
   const embed = new EmbedBuilder()
@@ -206,6 +199,59 @@ async function handleTicketClaim(interaction) {
     .setTimestamp();
 
   await interaction.reply({ embeds: [embed] });
+}
+
+// ── Mark as Done ──────────────────────────────────────────────────────────────
+async function handleTicketDone(interaction) {
+  const member = interaction.member;
+  if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
+    return interaction.reply({ content: '❌ Only administrators can mark tickets as done.', ephemeral: true });
+  }
+
+  const channel  = interaction.channel;
+  const guild    = interaction.guild;
+  const markedBy = interaction.user;
+
+  // Update the ticket embed buttons — disable Done, keep others active
+  try {
+    const msgs     = await channel.messages.fetch({ limit: 15 });
+    const original = msgs.find(m => m.author.id === guild.members.me.id && m.components.length > 0);
+    if (original) {
+      await original.edit({ components: [ticketButtons({ doneDisabled: true })] });
+    }
+  } catch {}
+
+  // Lock the channel so the user can't send more messages
+  const ownerId = getOwnerByChannel(channel.id);
+  await channel.permissionOverwrites.edit(guild.id, { SendMessages: false }).catch(() => {});
+  if (ownerId) {
+    await channel.permissionOverwrites.edit(ownerId, { ViewChannel: true, SendMessages: false }).catch(() => {});
+  }
+
+  const deleteAt = Math.floor((Date.now() + DONE_AUTO_DELETE_MS) / 1000);
+
+  const doneEmbed = new EmbedBuilder()
+    .setTitle('✅ Ticket Marked as Done')
+    .setDescription(
+      `This ticket has been marked as **Done** by <@${markedBy.id}>.\n\n` +
+      `🕐 This channel will be **automatically deleted** <t:${deleteAt}:R> (<t:${deleteAt}:F>).\n\n` +
+      `Use 📄 **Transcript** to save a log before it's deleted.`
+    )
+    .setColor(0x2ecc71)
+    .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [doneEmbed] });
+
+  // Schedule auto-delete after 24 hours
+  const timerId = setTimeout(async () => {
+    _doneTimers.delete(channel.id);
+    const ownId = getOwnerByChannel(channel.id);
+    if (ownId) removeTicket(ownId);
+    await channel.delete(`Ticket auto-deleted 24 hours after being marked as done by ${markedBy.username}`).catch(() => {});
+  }, DONE_AUTO_DELETE_MS);
+
+  _doneTimers.set(channel.id, timerId);
 }
 
 // ── Transcript ────────────────────────────────────────────────────────────────
@@ -279,9 +325,17 @@ async function handleTicketDeleteConfirm(interaction) {
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
     return interaction.reply({ content: '❌ Only administrators can delete tickets.', ephemeral: true });
   }
-  const channel  = interaction.channel;
-  const ownerId  = getOwnerByChannel(channel.id);
+  const channel = interaction.channel;
+  const ownerId = getOwnerByChannel(channel.id);
   if (ownerId) removeTicket(ownerId);
+
+  // Clear any pending done-timer for this channel
+  const timerId = _doneTimers.get(channel.id);
+  if (timerId) {
+    clearTimeout(timerId);
+    _doneTimers.delete(channel.id);
+  }
+
   await interaction.reply({ content: '🗑 Deleting ticket...', ephemeral: true });
   setTimeout(() => channel.delete().catch(() => {}), 2000);
 }
@@ -294,6 +348,7 @@ module.exports = {
   handleTicketSelect,
   handleTicketClose,
   handleTicketClaim,
+  handleTicketDone,
   handleTicketTranscript,
   handleTicketDelete,
   handleTicketDeleteConfirm,
