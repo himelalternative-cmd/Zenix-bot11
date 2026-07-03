@@ -7,6 +7,7 @@ const {
   handleTicketSelect,
   handleTicketClose,
   handleTicketClaim,
+  handleTicketDone,
   handleTicketTranscript,
   handleTicketDelete,
   handleTicketDeleteConfirm,
@@ -111,6 +112,7 @@ async function handleInteraction(client, interaction) {
     if (id.startsWith('pay_reject'))     return handlePayReject(interaction);
     if (id === 'ticket_close')          return handleTicketClose(interaction);
     if (id === 'ticket_claim')          return handleTicketClaim(interaction);
+    if (id === 'ticket_done')           return handleTicketDone(interaction);
     if (id === 'ticket_transcript')     return handleTicketTranscript(interaction);
     if (id === 'ticket_delete')         return handleTicketDelete(interaction);
     if (id === 'ticket_delete_confirm') return handleTicketDeleteConfirm(interaction);
