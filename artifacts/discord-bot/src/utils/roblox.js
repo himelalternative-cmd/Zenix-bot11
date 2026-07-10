@@ -261,15 +261,20 @@ async function payoutRobux(userId, amount) {
           actionType,
         });
 
-        // Verify succeeds using the INNER challenge id, and the retry must
-        // stay consistent with whichever id was actually verified — Roblox
-        // rejects the retry ("Challenge failed to authorize request") if the
-        // rblx-challenge-id header doesn't match the id embedded in the
-        // metadata that was just verified. Use the inner id for BOTH.
+        // Verify uses the INNER id (from decoded metadata) — that has
+        // consistently returned HTTP 200 with a verificationToken. But the
+        // retry's rblx-challenge-id HEADER should match the header Roblox
+        // originally sent on the 403 (the OUTER id) — that's the challenge
+        // *session* identifier the payouts endpoint is actually tracking.
+        // The metadata itself (which still contains the inner id in its own
+        // challengeId field, preserved from the original object) is what
+        // ties the two together. Previous attempts either used outer/inner
+        // consistently everywhere, or outer header + minimal metadata — this
+        // is the untried combination: outer header + FULL preserved metadata.
         const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, csrfToken, actionType, decodedMeta);
 
         res = await doPayoutRequest({
-          'rblx-challenge-id': effectiveChallengeId,
+          'rblx-challenge-id': headerChallengeId,
           'rblx-challenge-type': 'twostepverification',
           'rblx-challenge-metadata': challengeMetadata,
         });
