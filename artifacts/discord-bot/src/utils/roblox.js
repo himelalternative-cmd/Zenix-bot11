@@ -184,30 +184,43 @@ async function payoutRobux(userId, amount) {
 
   // ── Handle Roblox's Two-Step Verification "challenge" flow ──────────────
   if (res.status === 403) {
-    const challengeId       = res.headers.get('rblx-challenge-id');
+    const headerChallengeId = res.headers.get('rblx-challenge-id');
     const challengeType     = res.headers.get('rblx-challenge-type');
     const rawChallengeMeta  = res.headers.get('rblx-challenge-metadata');
 
-    if (challengeId && challengeType === 'twostepverification') {
+    if (headerChallengeId && challengeType === 'twostepverification') {
       try {
         // CSRF token may rotate on a 403 — refresh from this response if present.
         const freshCsrf = res.headers.get('x-csrf-token');
         if (freshCsrf) csrfToken = freshCsrf;
 
-        // Decode the actionType Roblox expects for THIS specific challenge —
-        // assuming "Generic" causes an "Invalid challenge ID" verification error.
+        // Decode the challenge metadata Roblox sent — it can contain its OWN
+        // challengeId (which may differ subtly from the header value) plus the
+        // actionType/userId this specific challenge was issued for. Using the
+        // header's challengeId alone is what caused "Invalid challenge ID".
         let actionType = 'Generic';
+        let effectiveChallengeId = headerChallengeId;
+        let decodedMeta = null;
         if (rawChallengeMeta) {
           try {
-            const decoded = JSON.parse(Buffer.from(rawChallengeMeta, 'base64').toString('utf8'));
-            if (decoded?.actionType) actionType = decoded.actionType;
+            decodedMeta = JSON.parse(Buffer.from(rawChallengeMeta, 'base64').toString('utf8'));
+            if (decodedMeta?.actionType) actionType = decodedMeta.actionType;
+            if (decodedMeta?.challengeId) effectiveChallengeId = decodedMeta.challengeId;
           } catch {}
         }
 
-        const challengeMetadata = await solveTwoStepChallenge(challengeId, csrfToken, actionType);
+        console.log('[roblox] 2FA challenge received:', {
+          headerChallengeId,
+          challengeType,
+          decodedMeta,
+          effectiveChallengeId,
+          actionType,
+        });
+
+        const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, csrfToken, actionType);
 
         res = await doPayoutRequest({
-          'rblx-challenge-id': challengeId,
+          'rblx-challenge-id': effectiveChallengeId,
           'rblx-challenge-type': 'twostepverification',
           'rblx-challenge-metadata': challengeMetadata,
         });
