@@ -1,18 +1,60 @@
 // ─── Roblox Group Payout Utility ──────────────────────────────────────────────
 // Uses the account's .ROBLOSECURITY cookie (ROBLOX_COOKIE) to send Robux from
 // a Group's payout funds to a member via the (unofficial) Group Payouts API.
+// Automatically solves the Two-Step Verification "challenge" Roblox requires
+// on sensitive money-moving requests, using an authenticator TOTP secret.
 //
-// NOTE: This relies on an undocumented Roblox endpoint and cookie-based auth.
+// NOTE: This relies on undocumented Roblox endpoints and cookie-based auth.
 // It is against Roblox's Terms of Service and carries a risk of the account
 // being flagged or banned. Use at your own risk.
 
-const COOKIE   = process.env.ROBLOX_COOKIE;
-const GROUP_ID = process.env.ROBLOX_GROUP_ID;
+const crypto = require('crypto');
+
+const COOKIE       = process.env.ROBLOX_COOKIE;
+const GROUP_ID      = process.env.ROBLOX_GROUP_ID;
+const TOTP_SECRET   = process.env.ROBLOX_TOTP_SECRET;
 
 function assertConfigured() {
   if (!COOKIE || !GROUP_ID) {
     throw new Error('Roblox payout is not configured (missing ROBLOX_COOKIE or ROBLOX_GROUP_ID).');
   }
+}
+
+// ── TOTP (RFC 6238) — generate a 6-digit authenticator code from the secret ───
+function base32Decode(base32) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean    = base32.replace(/=+$/, '').toUpperCase().replace(/\s/g, '');
+  let bits = '';
+  for (const char of clean) {
+    const idx = alphabet.indexOf(char);
+    if (idx === -1) continue;
+    bits += idx.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.substring(i, i + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+function generateTOTP(secretBase32, timeOffsetSteps = 0) {
+  if (!secretBase32) throw new Error('ROBLOX_TOTP_SECRET is not configured.');
+  const key     = base32Decode(secretBase32);
+  const counter = Math.floor(Date.now() / 1000 / 30) + timeOffsetSteps;
+
+  const counterBuf = Buffer.alloc(8);
+  counterBuf.writeUInt32BE(0, 0);
+  counterBuf.writeUInt32BE(counter, 4);
+
+  const hmac   = crypto.createHmac('sha1', key).update(counterBuf).digest();
+  const offset = hmac[hmac.length - 1] & 0xf;
+  const code =
+    ((hmac[offset] & 0x7f) << 24 |
+     (hmac[offset + 1] & 0xff) << 16 |
+     (hmac[offset + 2] & 0xff) << 8 |
+     (hmac[offset + 3] & 0xff)) % 1000000;
+
+  return code.toString().padStart(6, '0');
 }
 
 // ── Fetch a fresh X-CSRF-TOKEN by making a request that Roblox will reject ────
@@ -24,6 +66,19 @@ async function getCsrfToken() {
   const token = res.headers.get('x-csrf-token');
   if (!token) throw new Error('Failed to obtain Roblox CSRF token — cookie may be invalid or expired.');
   return token;
+}
+
+// ── Get the authenticated account's own userId (needed for 2FA challenge API) ─
+let _cachedAuthUserId = null;
+async function getAuthenticatedUserId() {
+  if (_cachedAuthUserId) return _cachedAuthUserId;
+  const res = await fetch('https://users.roblox.com/v1/users/authenticated', {
+    headers: { Cookie: `.ROBLOSECURITY=${COOKIE}` },
+  });
+  if (!res.ok) throw new Error(`Failed to fetch authenticated user (HTTP ${res.status}). Cookie may be invalid/expired.`);
+  const data = await res.json();
+  _cachedAuthUserId = data.id;
+  return data.id;
 }
 
 // ── Resolve a Roblox username → userId ─────────────────────────────────────────
@@ -53,23 +108,102 @@ async function getGroupFunds() {
   return data.robux ?? 0;
 }
 
-// ── Send a Robux payout to a specific userId ────────────────────────────────
+// ── Solve a Two-Step Verification "challenge" using the authenticator TOTP ────
+// Returns the base64 `rblx-challenge-metadata` continuation header value.
+async function solveTwoStepChallenge(challengeId, csrfToken) {
+  if (!TOTP_SECRET) {
+    throw new Error('2FA challenge required but ROBLOX_TOTP_SECRET is not configured.');
+  }
+
+  const authUserId = await getAuthenticatedUserId();
+
+  // Try current code, then ± one time-step in case of clock drift.
+  const attempts = [0, -1, 1];
+  let lastErr = null;
+
+  for (const offset of attempts) {
+    const code = generateTOTP(TOTP_SECRET, offset);
+    const verifyRes = await fetch(
+      `https://twostepverification.roblox.com/v1/users/${authUserId}/challenges/authenticator/verify`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          Cookie: `.ROBLOSECURITY=${COOKIE}`,
+        },
+        body: JSON.stringify({ challengeId, actionType: 'Generic', code }),
+      }
+    );
+
+    if (verifyRes.ok) {
+      const verifyData = await verifyRes.json();
+      const verificationToken = verifyData.verificationToken;
+      if (!verificationToken) {
+        lastErr = new Error('2FA verification succeeded but no verificationToken was returned.');
+        continue;
+      }
+      return Buffer.from(JSON.stringify({
+        verificationToken,
+        rememberDevice: false,
+        challengeId,
+        actionType: 'Generic',
+      })).toString('base64');
+    }
+
+    const errBody = await verifyRes.json().catch(() => null);
+    lastErr = new Error(errBody?.errors?.[0]?.message || `2FA verification failed (HTTP ${verifyRes.status}).`);
+  }
+
+  throw lastErr;
+}
+
+// ── Send a Robux payout to a specific userId (auto-solves 2FA challenge) ──────
 async function payoutRobux(userId, amount) {
   assertConfigured();
-  const csrfToken = await getCsrfToken();
+  let csrfToken = await getCsrfToken();
 
-  const res = await fetch(`https://groups.roblox.com/v1/groups/${GROUP_ID}/payouts`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRF-TOKEN': csrfToken,
-      Cookie: `.ROBLOSECURITY=${COOKIE}`,
-    },
-    body: JSON.stringify({
-      PayoutType: 'FixedAmount',
-      Recipients: [{ recipientId: userId, recipientType: 'User', amount }],
-    }),
-  });
+  const doPayoutRequest = async (extraHeaders = {}) => {
+    return fetch(`https://groups.roblox.com/v1/groups/${GROUP_ID}/payouts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+        Cookie: `.ROBLOSECURITY=${COOKIE}`,
+        ...extraHeaders,
+      },
+      body: JSON.stringify({
+        PayoutType: 'FixedAmount',
+        Recipients: [{ recipientId: userId, recipientType: 'User', amount }],
+      }),
+    });
+  };
+
+  let res = await doPayoutRequest();
+
+  // ── Handle Roblox's Two-Step Verification "challenge" flow ──────────────
+  if (res.status === 403) {
+    const challengeId   = res.headers.get('rblx-challenge-id');
+    const challengeType = res.headers.get('rblx-challenge-type');
+
+    if (challengeId && challengeType === 'twostepverification') {
+      try {
+        // CSRF token may rotate on a 403 — refresh from this response if present.
+        const freshCsrf = res.headers.get('x-csrf-token');
+        if (freshCsrf) csrfToken = freshCsrf;
+
+        const challengeMetadata = await solveTwoStepChallenge(challengeId, csrfToken);
+
+        res = await doPayoutRequest({
+          'rblx-challenge-id': challengeId,
+          'rblx-challenge-type': 'twostepverification',
+          'rblx-challenge-metadata': challengeMetadata,
+        });
+      } catch (err) {
+        return { success: false, error: `2FA challenge failed: ${err.message}` };
+      }
+    }
+  }
 
   if (res.status === 200 || res.status === 204) {
     return { success: true };
