@@ -144,12 +144,42 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
         lastErr = new Error('2FA verification succeeded but no verificationToken was returned.');
         continue;
       }
-      return Buffer.from(JSON.stringify({
+
+      const challengeMetadata = Buffer.from(JSON.stringify({
         verificationToken,
         rememberDevice: false,
         challengeId,
         actionType: resolvedActionType,
       })).toString('base64');
+
+      // Roblox requires the challenge to be formally "continued"/authorized via
+      // the generic challenge service BEFORE the original request is retried —
+      // retrying with just the metadata header alone yields
+      // "Challenge failed to authorize request".
+      const continueRes = await fetch('https://apis.roblox.com/challenge/v1/continue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          Cookie: `.ROBLOSECURITY=${COOKIE}`,
+        },
+        body: JSON.stringify({
+          challengeId,
+          challengeType: 'twostepverification',
+          challengeMetadata,
+        }),
+      });
+
+      if (!continueRes.ok) {
+        const continueErrBody = await continueRes.json().catch(() => null);
+        lastErr = new Error(
+          continueErrBody?.errors?.[0]?.message ||
+          `Challenge continuation failed (HTTP ${continueRes.status}).`
+        );
+        continue;
+      }
+
+      return challengeMetadata;
     }
 
     const errBody = await verifyRes.json().catch(() => null);
