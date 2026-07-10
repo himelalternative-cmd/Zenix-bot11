@@ -253,16 +253,15 @@ async function payoutRobux(userId, amount) {
           actionType,
         });
 
-        // Roblox uses TWO different challenge IDs: an "outer" one (the header
-        // value, e.g. "us-central-...") that identifies the challenge session
-        // as a whole, and an "inner" nested one (from decoded metadata, a GUID)
-        // that identifies the specific 2SV step. The verify call needs the
-        // inner ID; the retry header needs the OUTER ID. Mixing them up is
-        // what caused "Invalid challenge ID" / 404s on the continue step.
+        // Verify succeeds using the INNER challenge id, and the retry must
+        // stay consistent with whichever id was actually verified — Roblox
+        // rejects the retry ("Challenge failed to authorize request") if the
+        // rblx-challenge-id header doesn't match the id embedded in the
+        // metadata that was just verified. Use the inner id for BOTH.
         const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, csrfToken, actionType);
 
         res = await doPayoutRequest({
-          'rblx-challenge-id': headerChallengeId,
+          'rblx-challenge-id': effectiveChallengeId,
           'rblx-challenge-type': 'twostepverification',
           'rblx-challenge-metadata': challengeMetadata,
         });
