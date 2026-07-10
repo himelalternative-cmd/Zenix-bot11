@@ -37,10 +37,26 @@ function base32Decode(base32) {
   return Buffer.from(bytes);
 }
 
+// Drift (ms) between Roblox's server clock and this container's clock, learned
+// from the `Date` response header on each Roblox request. Using server time
+// instead of raw local time avoids intermittent "invalid code" failures caused
+// by container clock skew.
+let _serverTimeDriftMs = 0;
+
+function updateServerTimeDrift(res) {
+  const dateHeader = res?.headers?.get?.('date');
+  if (!dateHeader) return;
+  const serverMs = Date.parse(dateHeader);
+  if (!Number.isNaN(serverMs)) {
+    _serverTimeDriftMs = serverMs - Date.now();
+  }
+}
+
 function generateTOTP(secretBase32, timeOffsetSteps = 0) {
   if (!secretBase32) throw new Error('ROBLOX_TOTP_SECRET is not configured.');
   const key     = base32Decode(secretBase32);
-  const counter = Math.floor(Date.now() / 1000 / 30) + timeOffsetSteps;
+  const now     = Date.now() + _serverTimeDriftMs;
+  const counter = Math.floor(now / 1000 / 30) + timeOffsetSteps;
 
   const counterBuf = Buffer.alloc(8);
   counterBuf.writeUInt32BE(0, 0);
@@ -63,6 +79,7 @@ async function getCsrfToken() {
     method: 'POST',
     headers: { Cookie: `.ROBLOSECURITY=${COOKIE}` },
   });
+  updateServerTimeDrift(res);
   const token = res.headers.get('x-csrf-token');
   if (!token) throw new Error('Failed to obtain Roblox CSRF token — cookie may be invalid or expired.');
   return token;
@@ -118,7 +135,9 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
   const authUserId = await getAuthenticatedUserId();
   const resolvedActionType = actionType || 'Generic';
 
-  // Try current code, then ± one time-step in case of clock drift.
+  // With server-time-synced generation this should match on the first try —
+  // each challenge is likely single-use, so wrong guesses can burn it. Only
+  // fall back to adjacent time-steps if the primary code is rejected.
   const attempts = [0, -1, 1];
   let lastErr = null;
 
