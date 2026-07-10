@@ -177,21 +177,22 @@ async function solveTwoStepChallenge(challengeId, outerChallengeId, csrfToken, a
         actionType: resolvedActionType,
       })).toString('base64');
 
-      // The "continue" call must use the OUTER challenge id (the one from the
-      // 403 response header), not the inner nested id used for verification —
-      // using the inner id here is what previously caused a 404 "Not Found".
+      // The "continue" call, like every other challenge-protected Roblox
+      // endpoint, expects the challenge context as HTTP HEADERS
+      // (rblx-challenge-id / -type / -metadata), not as JSON body fields —
+      // sending them in the body is what caused the generic 403
+      // "an internal error occurred" response.
       const continueRes = await fetch('https://apis.roblox.com/challenge/v1/continue', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-TOKEN': csrfToken,
           Cookie: `.ROBLOSECURITY=${COOKIE}`,
+          'rblx-challenge-id': outerChallengeId,
+          'rblx-challenge-type': 'twostepverification',
+          'rblx-challenge-metadata': challengeMetadata,
         },
-        body: JSON.stringify({
-          challengeId: outerChallengeId,
-          challengeType: 'twostepverification',
-          challengeMetadata,
-        }),
+        body: JSON.stringify({}),
       });
 
       const continueBody = await continueRes.json().catch(() => null);
