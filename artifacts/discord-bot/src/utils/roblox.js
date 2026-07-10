@@ -42,10 +42,13 @@ async function getUserIdByUsername(username) {
 // ── Check the group's available payout funds ────────────────────────────────
 async function getGroupFunds() {
   assertConfigured();
-  const res = await fetch(`https://groups.roblox.com/v1/groups/${GROUP_ID}/currency`, {
+  const res = await fetch(`https://economy.roblox.com/v1/groups/${GROUP_ID}/currency`, {
     headers: { Cookie: `.ROBLOSECURITY=${COOKIE}` },
   });
-  if (!res.ok) throw new Error(`Failed to fetch group funds (HTTP ${res.status}).`);
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => '');
+    throw new Error(`Failed to fetch group funds (HTTP ${res.status}). ${bodyText.slice(0, 200)}`);
+  }
   const data = await res.json();
   return data.robux ?? 0;
 }
