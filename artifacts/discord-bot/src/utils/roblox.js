@@ -163,6 +163,7 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
 
     if (verifyRes.ok) {
       const verifyData = await verifyRes.json();
+      console.log(`[roblox] Verify response (offset ${offset}, HTTP ${verifyRes.status}):`, JSON.stringify(verifyData));
       const verificationToken = verifyData.verificationToken;
       if (!verificationToken) {
         lastErr = new Error('2FA verification succeeded but no verificationToken was returned.');
@@ -194,10 +195,12 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
         }),
       });
 
+      const continueBody = await continueRes.json().catch(() => null);
+      console.log(`[roblox] Continue response (HTTP ${continueRes.status}):`, JSON.stringify(continueBody));
+
       if (!continueRes.ok) {
-        const continueErrBody = await continueRes.json().catch(() => null);
         lastErr = new Error(
-          continueErrBody?.errors?.[0]?.message ||
+          continueBody?.errors?.[0]?.message ||
           `Challenge continuation failed (HTTP ${continueRes.status}).`
         );
         continue;
@@ -207,6 +210,7 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
     }
 
     const errBody = await verifyRes.json().catch(() => null);
+    console.log(`[roblox] Verify FAILED (offset ${offset}, HTTP ${verifyRes.status}):`, JSON.stringify(errBody));
     lastErr = new Error(errBody?.errors?.[0]?.message || `2FA verification failed (HTTP ${verifyRes.status}).`);
   }
 
