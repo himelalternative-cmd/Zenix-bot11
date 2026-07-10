@@ -143,6 +143,11 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
 
   for (const offset of attempts) {
     const code = generateTOTP(TOTP_SECRET, offset);
+    console.log(
+      `[roblox] Generated TOTP code for offset ${offset}: ${code} ` +
+      `(compare this to your authenticator app at the same moment — if it never matches, ` +
+      `ROBLOX_TOTP_SECRET is wrong)`
+    );
     const verifyRes = await fetch(
       `https://twostepverification.roblox.com/v1/users/${authUserId}/challenges/authenticator/verify`,
       {
