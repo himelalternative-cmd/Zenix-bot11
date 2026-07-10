@@ -127,7 +127,7 @@ async function getGroupFunds() {
 
 // ── Solve a Two-Step Verification "challenge" using the authenticator TOTP ────
 // Returns the base64 `rblx-challenge-metadata` continuation header value.
-async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
+async function solveTwoStepChallenge(challengeId, csrfToken, actionType, originalMeta) {
   if (!TOTP_SECRET) {
     throw new Error('2FA challenge required but ROBLOX_TOTP_SECRET is not configured.');
   }
@@ -177,12 +177,20 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
       // call is embedded directly into the retry's metadata header, which
       // is the flow documented for group-payout twostepverification
       // challenges specifically (as opposed to "chef"-wrapped challenges).
-      const challengeMetadata = Buffer.from(JSON.stringify({
+      //
+      // IMPORTANT: Roblox's original challenge metadata included MORE fields
+      // than we were sending back (userId, shouldShowRememberDeviceCheckbox,
+      // sessionCookie, etc). Sending a stripped-down object was likely why
+      // the retry kept failing with "Challenge failed to authorize request".
+      // Preserve the full original object and only overwrite verificationToken.
+      const metadataObj = {
+        ...(originalMeta || {}),
         verificationToken,
         rememberDevice: false,
         challengeId,
         actionType: resolvedActionType,
-      })).toString('base64');
+      };
+      const challengeMetadata = Buffer.from(JSON.stringify(metadataObj)).toString('base64');
 
       return challengeMetadata;
     }
@@ -258,7 +266,7 @@ async function payoutRobux(userId, amount) {
         // rejects the retry ("Challenge failed to authorize request") if the
         // rblx-challenge-id header doesn't match the id embedded in the
         // metadata that was just verified. Use the inner id for BOTH.
-        const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, csrfToken, actionType);
+        const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, csrfToken, actionType, decodedMeta);
 
         res = await doPayoutRequest({
           'rblx-challenge-id': effectiveChallengeId,
