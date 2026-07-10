@@ -110,12 +110,13 @@ async function getGroupFunds() {
 
 // ── Solve a Two-Step Verification "challenge" using the authenticator TOTP ────
 // Returns the base64 `rblx-challenge-metadata` continuation header value.
-async function solveTwoStepChallenge(challengeId, csrfToken) {
+async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
   if (!TOTP_SECRET) {
     throw new Error('2FA challenge required but ROBLOX_TOTP_SECRET is not configured.');
   }
 
   const authUserId = await getAuthenticatedUserId();
+  const resolvedActionType = actionType || 'Generic';
 
   // Try current code, then ± one time-step in case of clock drift.
   const attempts = [0, -1, 1];
@@ -132,7 +133,7 @@ async function solveTwoStepChallenge(challengeId, csrfToken) {
           'X-CSRF-TOKEN': csrfToken,
           Cookie: `.ROBLOSECURITY=${COOKIE}`,
         },
-        body: JSON.stringify({ challengeId, actionType: 'Generic', code }),
+        body: JSON.stringify({ challengeId, actionType: resolvedActionType, code }),
       }
     );
 
@@ -147,7 +148,7 @@ async function solveTwoStepChallenge(challengeId, csrfToken) {
         verificationToken,
         rememberDevice: false,
         challengeId,
-        actionType: 'Generic',
+        actionType: resolvedActionType,
       })).toString('base64');
     }
 
@@ -183,8 +184,9 @@ async function payoutRobux(userId, amount) {
 
   // ── Handle Roblox's Two-Step Verification "challenge" flow ──────────────
   if (res.status === 403) {
-    const challengeId   = res.headers.get('rblx-challenge-id');
-    const challengeType = res.headers.get('rblx-challenge-type');
+    const challengeId       = res.headers.get('rblx-challenge-id');
+    const challengeType     = res.headers.get('rblx-challenge-type');
+    const rawChallengeMeta  = res.headers.get('rblx-challenge-metadata');
 
     if (challengeId && challengeType === 'twostepverification') {
       try {
@@ -192,7 +194,17 @@ async function payoutRobux(userId, amount) {
         const freshCsrf = res.headers.get('x-csrf-token');
         if (freshCsrf) csrfToken = freshCsrf;
 
-        const challengeMetadata = await solveTwoStepChallenge(challengeId, csrfToken);
+        // Decode the actionType Roblox expects for THIS specific challenge —
+        // assuming "Generic" causes an "Invalid challenge ID" verification error.
+        let actionType = 'Generic';
+        if (rawChallengeMeta) {
+          try {
+            const decoded = JSON.parse(Buffer.from(rawChallengeMeta, 'base64').toString('utf8'));
+            if (decoded?.actionType) actionType = decoded.actionType;
+          } catch {}
+        }
+
+        const challengeMetadata = await solveTwoStepChallenge(challengeId, csrfToken, actionType);
 
         res = await doPayoutRequest({
           'rblx-challenge-id': challengeId,
