@@ -127,7 +127,7 @@ async function getGroupFunds() {
 
 // ── Solve a Two-Step Verification "challenge" using the authenticator TOTP ────
 // Returns the base64 `rblx-challenge-metadata` continuation header value.
-async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
+async function solveTwoStepChallenge(challengeId, outerChallengeId, csrfToken, actionType) {
   if (!TOTP_SECRET) {
     throw new Error('2FA challenge required but ROBLOX_TOTP_SECRET is not configured.');
   }
@@ -170,17 +170,40 @@ async function solveTwoStepChallenge(challengeId, csrfToken, actionType) {
         continue;
       }
 
-      // NOTE: no separate "continue" call here — apis.roblox.com/challenge/v1/continue
-      // is only for unwrapping an outer "chef" challenge layer, and 404s when
-      // called directly for a twostepverification challenge like this one.
-      // The verificationToken from this verify call is sufficient; it gets
-      // embedded directly in the retry's rblx-challenge-metadata header.
       const challengeMetadata = Buffer.from(JSON.stringify({
         verificationToken,
         rememberDevice: false,
         challengeId,
         actionType: resolvedActionType,
       })).toString('base64');
+
+      // The "continue" call must use the OUTER challenge id (the one from the
+      // 403 response header), not the inner nested id used for verification —
+      // using the inner id here is what previously caused a 404 "Not Found".
+      const continueRes = await fetch('https://apis.roblox.com/challenge/v1/continue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          Cookie: `.ROBLOSECURITY=${COOKIE}`,
+        },
+        body: JSON.stringify({
+          challengeId: outerChallengeId,
+          challengeType: 'twostepverification',
+          challengeMetadata,
+        }),
+      });
+
+      const continueBody = await continueRes.json().catch(() => null);
+      console.log(`[roblox] Continue response (HTTP ${continueRes.status}):`, JSON.stringify(continueBody));
+
+      if (!continueRes.ok) {
+        lastErr = new Error(
+          continueBody?.errors?.[0]?.message ||
+          `Challenge continuation failed (HTTP ${continueRes.status}).`
+        );
+        continue;
+      }
 
       return challengeMetadata;
     }
@@ -257,7 +280,7 @@ async function payoutRobux(userId, amount) {
         // that identifies the specific 2SV step. The verify call needs the
         // inner ID; the retry header needs the OUTER ID. Mixing them up is
         // what caused "Invalid challenge ID" / 404s on the continue step.
-        const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, csrfToken, actionType);
+        const challengeMetadata = await solveTwoStepChallenge(effectiveChallengeId, headerChallengeId, csrfToken, actionType);
 
         res = await doPayoutRequest({
           'rblx-challenge-id': headerChallengeId,
