@@ -59,10 +59,11 @@ function notEligibleMessage(username) {
 }
 
 function pendingMessage(username, eligibleAt) {
+  const ts = Math.floor(eligibleAt / 1000);
   return (
     `❌ **${username}** is not eligible for payout.\n` +
     `They must be a community member for 14 days before receiving a payout.\n` +
-    `Eligible at: <t:${Math.floor(eligibleAt / 1000)}:F>`
+    `Eligible **<t:${ts}:R>** (<t:${ts}:F>)`
   );
 }
 
