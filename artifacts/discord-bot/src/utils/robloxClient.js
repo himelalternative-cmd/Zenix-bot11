@@ -3,10 +3,11 @@
 
 const crypto = require('crypto');
 
-const USERS_API  = 'https://users.roblox.com';
-const GROUPS_API = 'https://groups.roblox.com';
-const AUTH_API   = 'https://auth.roblox.com';
-const TWOSV_API  = 'https://twostepverification.roblox.com';
+const USERS_API     = 'https://users.roblox.com';
+const GROUPS_API    = 'https://groups.roblox.com';
+const AUTH_API      = 'https://auth.roblox.com';
+const TWOSV_API     = 'https://twostepverification.roblox.com';
+const CHALLENGE_API = 'https://apis.roblox.com';
 
 let cachedCsrfToken = null;
 
@@ -144,7 +145,44 @@ async function solveTwoStepChallenge({ headerChallengeId, actionType, csrfToken,
         verificationToken,
         rememberDevice: false,
       };
-      return Buffer.from(JSON.stringify(metadataObj)).toString('base64');
+      const selfBuiltMetadata = Buffer.from(JSON.stringify(metadataObj)).toString('base64');
+
+      // Roblox's real web client doesn't hand the self-built metadata straight
+      // back to the original request — it first POSTs to a generic challenge
+      // orchestration endpoint, which validates the sub-challenge result and
+      // hands back the metadata blob that's actually valid for the retry.
+      // Try that path; if it's unavailable (403/404) for this challenge type,
+      // fall back to the self-built metadata rather than failing outright.
+      try {
+        const continueRes = await fetch(`${CHALLENGE_API}/challenge/v1/continue`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+            Cookie: getCookie(),
+            'rblx-challenge-id': headerChallengeId,
+            'rblx-challenge-type': 'twostepverification',
+            'rblx-challenge-metadata': selfBuiltMetadata,
+          },
+          body: JSON.stringify({
+            challengeId: headerChallengeId,
+            challengeType: 'twostepverification',
+            challengeMetadata: selfBuiltMetadata,
+          }),
+        });
+        trackServerTime(continueRes);
+        const continueBody = await continueRes.json().catch(() => null);
+
+        console.log(`[robloxClient] challenge/v1/continue response (HTTP ${continueRes.status}):`, JSON.stringify(continueBody));
+
+        if (continueRes.ok && continueBody?.challengeMetadata) {
+          return continueBody.challengeMetadata;
+        }
+      } catch (err) {
+        console.error('[robloxClient] challenge/v1/continue call errored:', err.message);
+      }
+
+      return selfBuiltMetadata;
     }
 
     const errBody = await verifyRes.json().catch(() => null);
