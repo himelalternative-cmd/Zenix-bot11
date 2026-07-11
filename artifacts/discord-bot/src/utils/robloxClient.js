@@ -1,9 +1,12 @@
 // Thin wrapper around Roblox's public/authenticated web APIs.
 // Uses global fetch (Node 18+).
 
+const crypto = require('crypto');
+
 const USERS_API  = 'https://users.roblox.com';
 const GROUPS_API = 'https://groups.roblox.com';
 const AUTH_API   = 'https://auth.roblox.com';
+const TWOSV_API  = 'https://twostepverification.roblox.com';
 
 let cachedCsrfToken = null;
 
@@ -11,6 +14,137 @@ function getCookie() {
   const cookie = process.env.ROBLOX_COOKIE;
   if (!cookie) throw new Error('ROBLOX_COOKIE is not configured.');
   return cookie.startsWith('.ROBLOSECURITY=') ? cookie : `.ROBLOSECURITY=${cookie}`;
+}
+
+// ── TOTP (RFC 6238) — generates the same 6-digit code an authenticator app
+// would show, from the account's Two-Step Verification secret key. Needed to
+// auto-answer the "challenge" Roblox puts on sensitive money-moving requests
+// like group payouts. ──────────────────────────────────────────────────────
+function base32Decode(base32) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const clean = base32.replace(/=+$/, '').toUpperCase().replace(/\s/g, '');
+  let bits = '';
+  for (const char of clean) {
+    const idx = alphabet.indexOf(char);
+    if (idx === -1) continue;
+    bits += idx.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.substring(i, i + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+// Drift between Roblox's server clock and this process's clock, learned from
+// the `Date` response header on every Roblox request. TOTP codes are time
+// windowed (30s), so even a few seconds of container clock skew can produce a
+// code that looks right locally but Roblox rejects as invalid.
+let serverTimeDriftMs = 0;
+
+function trackServerTime(res) {
+  const dateHeader = res?.headers?.get?.('date');
+  if (!dateHeader) return;
+  const serverMs = Date.parse(dateHeader);
+  if (!Number.isNaN(serverMs)) serverTimeDriftMs = serverMs - Date.now();
+}
+
+function generateTotp(secretBase32, stepOffset = 0) {
+  const key = base32Decode(secretBase32);
+  const nowMs = Date.now() + serverTimeDriftMs;
+  const counter = Math.floor(nowMs / 1000 / 30) + stepOffset;
+
+  const counterBuf = Buffer.alloc(8);
+  counterBuf.writeUInt32BE(0, 0);
+  counterBuf.writeUInt32BE(counter, 4);
+
+  const hmac = crypto.createHmac('sha1', key).update(counterBuf).digest();
+  const offset = hmac[hmac.length - 1] & 0xf;
+  const code =
+    (((hmac[offset] & 0x7f) << 24) |
+      ((hmac[offset + 1] & 0xff) << 16) |
+      ((hmac[offset + 2] & 0xff) << 8) |
+      (hmac[offset + 3] & 0xff)) %
+    1000000;
+
+  return code.toString().padStart(6, '0');
+}
+
+let cachedAuthUserId = null;
+async function getAuthenticatedUserId() {
+  if (cachedAuthUserId) return cachedAuthUserId;
+  const res = await fetch(`${USERS_API}/v1/users/authenticated`, {
+    headers: { Cookie: getCookie() },
+  });
+  if (!res.ok) throw new Error(`Could not identify the Roblox payout account (HTTP ${res.status}). Cookie may be invalid/expired.`);
+  const data = await res.json();
+  cachedAuthUserId = data.id;
+  return cachedAuthUserId;
+}
+
+// ── Solve a "twostepverification" challenge using the account's authenticator
+// TOTP secret. Returns the base64 `rblx-challenge-metadata` value to send on
+// the retried request. ─────────────────────────────────────────────────────
+async function solveTwoStepChallenge({ challengeId, actionType, csrfToken, originalMetadata }) {
+  const totpSecret = process.env.ROBLOX_TOTP_SECRET;
+  if (!totpSecret) {
+    throw new Error('Roblox is asking for Two-Step Verification but ROBLOX_TOTP_SECRET is not configured.');
+  }
+
+  const authUserId = await getAuthenticatedUserId();
+  const resolvedActionType = actionType || 'Generic';
+
+  // The code is time-windowed and Roblox's challenges are typically single-use,
+  // so try the current 30s step first and only fall back to adjacent steps if
+  // that's rejected (covers small clock drift even after syncing to the server).
+  let lastError = null;
+  for (const stepOffset of [0, -1, 1]) {
+    const code = generateTotp(totpSecret, stepOffset);
+
+    const verifyRes = await fetch(
+      `${TWOSV_API}/v1/users/${authUserId}/challenges/authenticator/verify`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          Cookie: getCookie(),
+        },
+        body: JSON.stringify({ challengeId, actionType: resolvedActionType, code }),
+      }
+    );
+    trackServerTime(verifyRes);
+
+    if (verifyRes.ok) {
+      const verifyData = await verifyRes.json();
+      const verificationToken = verifyData?.verificationToken;
+      if (!verificationToken) {
+        lastError = new Error('Roblox accepted the 2FA code but returned no verification token.');
+        continue;
+      }
+
+      // Roblox's retry expects the FULL original metadata object back, with
+      // verificationToken added and rememberDevice/challengeId/actionType set —
+      // sending a stripped-down object causes "Challenge failed to authorize".
+      const metadataObj = {
+        ...(originalMetadata || {}),
+        verificationToken,
+        rememberDevice: false,
+        challengeId,
+        actionType: resolvedActionType,
+      };
+      return Buffer.from(JSON.stringify(metadataObj)).toString('base64');
+    }
+
+    const errBody = await verifyRes.json().catch(() => null);
+    console.error(
+      `[robloxClient] 2FA verify failed (step offset ${stepOffset}, HTTP ${verifyRes.status}):`,
+      JSON.stringify(errBody)
+    );
+    lastError = new Error(errBody?.errors?.[0]?.message || `2FA verification failed (HTTP ${verifyRes.status}).`);
+  }
+
+  throw lastError;
 }
 
 // ── Resolve a Roblox username -> { id, name, displayName } ────────────────────
@@ -52,7 +186,7 @@ async function fetchCsrfToken() {
   return token;
 }
 
-async function robloxAuthedRequest(url, options = {}, retry = true) {
+async function robloxAuthedRequest(url, options = {}, { retryCsrf = true, retryChallenge = true } = {}) {
   const token = cachedCsrfToken || (await fetchCsrfToken());
 
   const res = await fetch(url, {
@@ -64,12 +198,64 @@ async function robloxAuthedRequest(url, options = {}, retry = true) {
       'Content-Type': 'application/json',
     },
   });
+  trackServerTime(res);
 
-  // CSRF token expired/rotated — refresh once and retry.
-  if (res.status === 403 && retry) {
-    cachedCsrfToken = null;
-    await fetchCsrfToken();
-    return robloxAuthedRequest(url, options, false);
+  if (res.status === 403) {
+    const challengeId = res.headers.get('rblx-challenge-id');
+    const challengeType = res.headers.get('rblx-challenge-type');
+    const rawChallengeMetadata = res.headers.get('rblx-challenge-metadata');
+
+    // Roblox is asking for Two-Step Verification on this request.
+    if (challengeId && challengeType === 'twostepverification' && retryChallenge) {
+      let decodedMetadata = null;
+      let actionType = 'Generic';
+      if (rawChallengeMetadata) {
+        try {
+          decodedMetadata = JSON.parse(Buffer.from(rawChallengeMetadata, 'base64').toString('utf8'));
+          if (decodedMetadata?.actionType) actionType = decodedMetadata.actionType;
+        } catch (err) {
+          console.error('[robloxClient] Failed to decode rblx-challenge-metadata:', err.message);
+        }
+      }
+
+      console.log('[robloxClient] 2FA challenge received:', {
+        challengeId,
+        challengeType,
+        actionType,
+        decodedMetadata,
+      });
+
+      const freshCsrf = res.headers.get('x-csrf-token');
+      if (freshCsrf) cachedCsrfToken = freshCsrf;
+
+      const challengeMetadata = await solveTwoStepChallenge({
+        challengeId,
+        actionType,
+        csrfToken: cachedCsrfToken,
+        originalMetadata: decodedMetadata,
+      });
+
+      return robloxAuthedRequest(
+        url,
+        {
+          ...options,
+          headers: {
+            ...(options.headers || {}),
+            'rblx-challenge-id': challengeId,
+            'rblx-challenge-type': 'twostepverification',
+            'rblx-challenge-metadata': challengeMetadata,
+          },
+        },
+        { retryCsrf, retryChallenge: false }
+      );
+    }
+
+    // Plain CSRF token expiry/rotation — refresh once and retry.
+    if (retryCsrf) {
+      cachedCsrfToken = null;
+      await fetchCsrfToken();
+      return robloxAuthedRequest(url, options, { retryCsrf: false, retryChallenge });
+    }
   }
 
   return res;
