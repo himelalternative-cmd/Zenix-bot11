@@ -1,7 +1,7 @@
 const { EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { handlePayCommand } = require('./payHandler');
 const { getOwnerByChannel, removeTicket } = require('../utils/tickets');
-const { checkEligibility, notEligibleMessage, pendingMessage } = require('./robuxHandler');
+const { checkEligibility, setJoinDate, notEligibleMessage, pendingMessage } = require('./robuxHandler');
 
 const CONVERSION_RATE = 0.9; // 1 Robux = 0.9 BDT
 
@@ -105,6 +105,37 @@ async function handlePrefix(message) {
     }
 
     return message.reply({ content: `✅ **${result.username}** is eligible for payout.` });
+  }
+
+  // !setjoin <Username> <daysAgo> — admin backfill for members who joined the
+  // community before this bot ever checked them (fixes an unfairly-reset 14-day clock).
+  const setJoinMatch = content.match(/^!setjoin\s+(\S+)\s+(\d+)$/i);
+  if (setJoinMatch) {
+    if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      return message.reply({ content: '❌ Only administrators can backdate a join date.' });
+    }
+
+    const [, username, daysAgoRaw] = setJoinMatch;
+    const daysAgo = parseInt(daysAgoRaw, 10);
+
+    let result;
+    try {
+      result = await setJoinDate(username, daysAgo);
+    } catch (err) {
+      return message.reply({ content: `❌ Could not reach Roblox right now: ${err.message}` });
+    }
+
+    if (result.status === 'not_found') {
+      return message.reply({ content: `❌ Roblox user \`${username}\` was not found.` });
+    }
+
+    const status = result.eligibility.eligible
+      ? '✅ eligible for payout right now.'
+      : `⏳ not yet eligible. Eligible at: <t:${Math.floor(result.eligibility.eligibleAt / 1000)}:F>`;
+
+    return message.reply({
+      content: `✅ Set **${result.username}**'s community join date to **${daysAgo} day${daysAgo === 1 ? '' : 's'} ago**.\nThey are ${status}`,
+    });
   }
 
   // !Pay command — optional amount: !pay  |  !pay 500  |  !pay $500  |  !pay 500BDT

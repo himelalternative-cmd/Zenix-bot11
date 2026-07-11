@@ -54,6 +54,7 @@ A Discord.js v14 bot for service-based Discord servers with order management, pa
 | `!500 BDT` / `!1000 TK` / `!250 T` | Convert BDT → Robux |
 | `!1000 RB` / `!2500 RBX` / `!500 Robux` | Convert Robux → BDT |
 | `!check <RobloxUsername>` | Check whether a Roblox user is eligible for a Robux payout (must be a community group member for 14 days) |
+| `!setjoin <RobloxUsername> <daysAgo>` | **Admin only.** Backdate a user's tracked join date (e.g. for members who joined before this feature existed) |
 
 ## Robux Payout (`/buy` → Robux)
 

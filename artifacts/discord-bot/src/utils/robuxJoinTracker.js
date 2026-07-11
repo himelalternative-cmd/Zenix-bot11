@@ -47,10 +47,21 @@ function getRecord(userId) {
   return load()[String(userId)] || null;
 }
 
+// Manually set/override a user's tracked join date (admin backfill for members
+// who were already in the community before this bot ever checked them).
+// Returns the record: { userId, username, firstSeenAt }
+function overrideFirstSeen(userId, username, firstSeenAt) {
+  const d   = load();
+  const key = String(userId);
+  d[key] = { userId: key, username, firstSeenAt };
+  save(d);
+  return d[key];
+}
+
 function getEligibility(record) {
   if (!record) return { eligible: false, eligibleAt: null };
   const eligibleAt = record.firstSeenAt + FOURTEEN_DAYS_MS;
   return { eligible: Date.now() >= eligibleAt, eligibleAt };
 }
 
-module.exports = { recordFirstSeen, getRecord, getEligibility, FOURTEEN_DAYS_MS };
+module.exports = { recordFirstSeen, getRecord, getEligibility, overrideFirstSeen, FOURTEEN_DAYS_MS };

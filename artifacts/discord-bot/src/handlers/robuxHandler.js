@@ -2,7 +2,7 @@ const {
   ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder,
 } = require('discord.js');
 const { resolveUserId, isGroupMember, sendGroupPayout } = require('../utils/robloxClient');
-const { recordFirstSeen, getRecord, getEligibility } = require('../utils/robuxJoinTracker');
+const { recordFirstSeen, getRecord, getEligibility, overrideFirstSeen } = require('../utils/robuxJoinTracker');
 const { getBalance, removeBalance, toTaka, toUSD } = require('../utils/zenixPoints');
 const { logPurchase, getLogChannel } = require('../utils/stockHistory');
 
@@ -39,6 +39,19 @@ async function checkEligibility(rawUsername) {
   }
 
   return { status: 'eligible', username: user.name, userId: user.id };
+}
+
+// ── Admin backfill: manually set a user's tracked join date ───────────────────
+// daysAgo: how many days ago they actually joined the community.
+async function setJoinDate(rawUsername, daysAgo) {
+  const user = await resolveUserId(rawUsername.trim());
+  if (!user) return { status: 'not_found' };
+
+  const firstSeenAt = Date.now() - daysAgo * 24 * 60 * 60 * 1000;
+  const record = overrideFirstSeen(user.id, user.name, firstSeenAt);
+  const eligibility = getEligibility(record);
+
+  return { status: 'ok', username: user.name, eligibility };
 }
 
 function notEligibleMessage(username) {
@@ -253,6 +266,7 @@ module.exports = {
   showRobuxModal,
   handleRobuxModal,
   checkEligibility,
+  setJoinDate,
   notEligibleMessage,
   pendingMessage,
   ROBUX_TO_ZP,
