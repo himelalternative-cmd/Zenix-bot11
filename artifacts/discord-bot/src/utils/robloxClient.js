@@ -246,19 +246,40 @@ async function robloxAuthedRequest(url, options = {}, { retryCsrf = true, retryC
         originalMetadata: decodedMetadata,
       });
 
-      return robloxAuthedRequest(
+      // The payout endpoint tracks challenges by the SPECIFIC inner id
+      // (decodedMetadata.challengeId), not the generic session id from the
+      // header — using the generic id here is what produced "Challenge
+      // failed to authorize request" on the previous attempt.
+      const retryChallengeId = decodedMetadata?.challengeId || challengeId;
+
+      console.log('[robloxClient] Retrying with solved challenge:', {
+        retryChallengeIdHeader: retryChallengeId,
+        challengeMetadataDecoded: JSON.parse(Buffer.from(challengeMetadata, 'base64').toString('utf8')),
+      });
+
+      const retryRes = await robloxAuthedRequest(
         url,
         {
           ...options,
           headers: {
             ...(options.headers || {}),
-            'rblx-challenge-id': challengeId,
+            'rblx-challenge-id': retryChallengeId,
             'rblx-challenge-type': 'twostepverification',
             'rblx-challenge-metadata': challengeMetadata,
           },
         },
         { retryCsrf, retryChallenge: false }
       );
+
+      if (!retryRes.ok) {
+        const retryBody = await retryRes.clone().json().catch(() => null);
+        console.error(
+          `[robloxClient] Retry after solved challenge still failed (HTTP ${retryRes.status}):`,
+          JSON.stringify(retryBody)
+        );
+      }
+
+      return retryRes;
     }
 
     // Plain CSRF token expiry/rotation — refresh once and retry.
