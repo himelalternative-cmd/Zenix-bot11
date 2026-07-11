@@ -1,6 +1,7 @@
 const { EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { handlePayCommand } = require('./payHandler');
 const { getOwnerByChannel, removeTicket } = require('../utils/tickets');
+const { checkEligibility, notEligibleMessage, pendingMessage } = require('./robuxHandler');
 
 const CONVERSION_RATE = 0.9; // 1 Robux = 0.9 BDT
 
@@ -80,6 +81,30 @@ async function handlePrefix(message) {
     await message.reply({ embeds: [embed] });
     setTimeout(() => channel.delete().catch(() => {}), 3000);
     return;
+  }
+
+  // !check <Username> — Robux payout eligibility (14-day community membership check)
+  const checkMatch = content.match(/^!check\s+(\S+)$/i);
+  if (checkMatch) {
+    const username = checkMatch[1];
+    let result;
+    try {
+      result = await checkEligibility(username);
+    } catch (err) {
+      return message.reply({ content: `❌ Could not reach Roblox right now: ${err.message}` });
+    }
+
+    if (result.status === 'not_found') {
+      return message.reply({ content: `❌ Roblox user \`${username}\` was not found.` });
+    }
+    if (result.status === 'not_member' || result.status === 'pending') {
+      const text = result.status === 'pending'
+        ? pendingMessage(result.username, result.eligibleAt)
+        : notEligibleMessage(result.username);
+      return message.reply({ content: text });
+    }
+
+    return message.reply({ content: `✅ **${result.username}** is eligible for payout.` });
   }
 
   // !Pay command — optional amount: !pay  |  !pay 500  |  !pay $500  |  !pay 500BDT
