@@ -85,13 +85,25 @@ async function getAuthenticatedUserId() {
 // ── Solve a "twostepverification" challenge using the account's authenticator
 // TOTP secret. Returns the base64 `rblx-challenge-metadata` value to send on
 // the retried request. ─────────────────────────────────────────────────────
-async function solveTwoStepChallenge({ challengeId, actionType, csrfToken, originalMetadata }) {
+//
+// Roblox's challenge metadata carries TWO different ids and they are NOT
+// interchangeable:
+//   - metadata.genericChallengeId  — the outer/session id (matches the
+//     rblx-challenge-id response header). Used at the transport layer only.
+//   - metadata.challengeId         — the inner, per-challenge UUID. This is
+//     the one the authenticator "verify" call actually expects; passing the
+//     generic/header id here is what produces "Invalid challenge ID".
+// metadata.userId identifies which account must complete the challenge —
+// prefer it over a separately-fetched authenticated-user id, since it's
+// exactly what Roblox told us this challenge is for.
+async function solveTwoStepChallenge({ headerChallengeId, actionType, csrfToken, originalMetadata }) {
   const totpSecret = process.env.ROBLOX_TOTP_SECRET;
   if (!totpSecret) {
     throw new Error('Roblox is asking for Two-Step Verification but ROBLOX_TOTP_SECRET is not configured.');
   }
 
-  const authUserId = await getAuthenticatedUserId();
+  const innerChallengeId = originalMetadata?.challengeId || headerChallengeId;
+  const targetUserId = originalMetadata?.userId || (await getAuthenticatedUserId());
   const resolvedActionType = actionType || 'Generic';
 
   // The code is time-windowed and Roblox's challenges are typically single-use,
@@ -102,7 +114,7 @@ async function solveTwoStepChallenge({ challengeId, actionType, csrfToken, origi
     const code = generateTotp(totpSecret, stepOffset);
 
     const verifyRes = await fetch(
-      `${TWOSV_API}/v1/users/${authUserId}/challenges/authenticator/verify`,
+      `${TWOSV_API}/v1/users/${targetUserId}/challenges/authenticator/verify`,
       {
         method: 'POST',
         headers: {
@@ -110,7 +122,7 @@ async function solveTwoStepChallenge({ challengeId, actionType, csrfToken, origi
           'X-CSRF-TOKEN': csrfToken,
           Cookie: getCookie(),
         },
-        body: JSON.stringify({ challengeId, actionType: resolvedActionType, code }),
+        body: JSON.stringify({ challengeId: innerChallengeId, actionType: resolvedActionType, code }),
       }
     );
     trackServerTime(verifyRes);
@@ -124,14 +136,13 @@ async function solveTwoStepChallenge({ challengeId, actionType, csrfToken, origi
       }
 
       // Roblox's retry expects the FULL original metadata object back, with
-      // verificationToken added and rememberDevice/challengeId/actionType set —
-      // sending a stripped-down object causes "Challenge failed to authorize".
+      // only verificationToken/rememberDevice added — the ids and actionType
+      // it already contains (challengeId, genericChallengeId, userId, ...)
+      // must be preserved as-is, not overwritten with the outer header id.
       const metadataObj = {
         ...(originalMetadata || {}),
         verificationToken,
         rememberDevice: false,
-        challengeId,
-        actionType: resolvedActionType,
       };
       return Buffer.from(JSON.stringify(metadataObj)).toString('base64');
     }
@@ -229,7 +240,7 @@ async function robloxAuthedRequest(url, options = {}, { retryCsrf = true, retryC
       if (freshCsrf) cachedCsrfToken = freshCsrf;
 
       const challengeMetadata = await solveTwoStepChallenge({
-        challengeId,
+        headerChallengeId: challengeId,
         actionType,
         csrfToken: cachedCsrfToken,
         originalMetadata: decodedMetadata,
