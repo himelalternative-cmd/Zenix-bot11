@@ -3,7 +3,6 @@ const { getGuildSettings, saveGuildSettings, getSettings, generateOrderId } = re
 const { getBalance, removeBalance, toTaka, toUSD } = require('../utils/zenixPoints');
 const { logPurchase, getLogChannel } = require('../utils/stockHistory');
 const { getOwnerByChannel } = require('../utils/tickets');
-const { isRobuxItem, showRobuxModal, ROBUX_TO_ZP } = require('../handlers/robuxHandler');
 
 function itemName(item) {
   return typeof item === 'string' ? item : item.name;
@@ -58,10 +57,6 @@ module.exports = {
         return { name: label, value: i.name };
       });
 
-    if ('robux'.includes(focused)) {
-      choices.unshift({ name: `Robux  —  ${ROBUX_TO_ZP} ZP per Robux  (Community Payout)`, value: 'Robux' });
-    }
-
     await interaction.respond(choices.slice(0, 25));
   },
 
@@ -76,12 +71,6 @@ module.exports = {
     }
 
     const chosen = interaction.options.getString('item').trim();
-
-    // Robux is a built-in item handled via a follow-up modal (asks for Roblox
-    // username + amount) rather than the generic stock-code flow below.
-    if (isRobuxItem(chosen)) {
-      return showRobuxModal(interaction);
-    }
 
     const items  = settings.items || [];
     const amount = interaction.options.getInteger('amount') ?? 1;

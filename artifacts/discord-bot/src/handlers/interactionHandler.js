@@ -3,7 +3,6 @@ const { handlePayButton, handleTrxModal, handlePayConfirm, handlePayConfirmModal
 const { handleDmMessageModal } = require('../commands/setup');
 const { handleVerifyButton, handleVerifyCaptcha } = require('./verifyHandler');
 const { handleGameInteraction, isGameInteraction } = require('./gameHandler');
-const { MODAL_ID: ROBUX_MODAL_ID, handleRobuxModal } = require('./robuxHandler');
 const {
   handleTicketSelect,
   handleTicketClose,
@@ -130,7 +129,6 @@ async function handleInteraction(client, interaction) {
     if (interaction.customId.startsWith('pay_reject_modal'))  return handleRejectModal(interaction);
     if (interaction.customId.startsWith('dm_modal'))               return handleDmModal(interaction);
     if (interaction.customId.startsWith('setup_dm_message_modal|')) return handleDmMessageModal(interaction);
-    if (interaction.customId === ROBUX_MODAL_ID)                    return handleRobuxModal(interaction);
     return;
   }
 }

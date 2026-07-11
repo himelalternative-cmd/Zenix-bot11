@@ -16,9 +16,6 @@ A Discord.js v14 bot for service-based Discord servers with order management, pa
 |---|---|
 | `DISCORD_BOT_TOKEN` | Your bot token from Discord Developer Portal |
 | `DISCORD_APPLICATION_ID` | Your application/client ID |
-| `ROBLOX_GROUP_ID` | Your Roblox community group ID, used for the Robux payout feature |
-| `ROBLOX_COOKIE` | Your Roblox account's `.ROBLOSECURITY` cookie — used to send group fund payouts. Keep this secret; whoever has it can fully control your Roblox account. |
-| `ROBLOX_TOTP_SECRET` | The authenticator secret key from enabling Two-Step Verification (authenticator app) on that Roblox account. Required to auto-answer the "challenge" Roblox puts on payouts. Keep this secret too. |
 
 ### Deploy to Railway
 
@@ -54,17 +51,6 @@ A Discord.js v14 bot for service-based Discord servers with order management, pa
 | `!Pay` | Show payment methods + submission form |
 | `!500 BDT` / `!1000 TK` / `!250 T` | Convert BDT → Robux |
 | `!1000 RB` / `!2500 RBX` / `!500 Robux` | Convert Robux → BDT |
-| `!check <RobloxUsername>` | Check whether a Roblox user is eligible for a Robux payout (must be a community group member for 14 days) |
-| `!setjoin <RobloxUsername> <daysAgo>` | **Admin only.** Backdate a user's tracked join date (e.g. for members who joined before this feature existed) |
-
-## Robux Payout (`/buy` → Robux)
-
-- `/buy` now includes a built-in **Robux** item (no setup needed) at a fixed rate of **1 Robux = 0.9 ZP**.
-- Selecting it opens a form asking for the buyer's Roblox username and the Robux amount.
-- The bot checks that the Roblox user has been a member of your group (`ROBLOX_GROUP_ID`) for at least 14 days — approximated as the first time the bot ever saw them as a member (Roblox's public API doesn't expose the real join date).
-- If eligible and the buyer has enough ZP, the bot sends the Robux directly via your group's funds using `ROBLOX_COOKIE`, then deducts the ZP and posts to the order channel.
-- If the payout call fails for any reason, the buyer is **not charged**.
-- Roblox may require **Two-Step Verification** to authorize a payout. If `ROBLOX_TOTP_SECRET` is set, the bot solves this automatically using the same authenticator code your 2FA app would generate. This relies on an undocumented Roblox flow and can occasionally fail — check the Railway logs for `[robloxClient] 2FA challenge received` / `2FA verify failed` if a payout is rejected with a challenge error.
 
 ## Color Palette
 
