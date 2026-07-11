@@ -5,6 +5,7 @@ const { registerCommands } = require('./utils/deploy-commands');
 const { getSettings, saveSettings } = require('./utils/settings');
 const { attachEvents } = require('./handlers/antinukeHandler');
 const { getGuildAutoReact } = require('./utils/autoReactSettings');
+const { handleLinkFilter } = require('./handlers/linkFilterHandler');
 
 const client = new Client({
   intents: [
@@ -117,6 +118,15 @@ client.on('interactionCreate', async interaction => {
 
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
+
+  // Link filter — deletes messages containing links (except GIFs) unless the
+  // author is an administrator. Stops further processing if the message was removed.
+  try {
+    const wasDeleted = await handleLinkFilter(message);
+    if (wasDeleted) return;
+  } catch (err) {
+    console.error('Link filter error:', err.message);
+  }
 
   // Auto-react
   if (message.guild) {
