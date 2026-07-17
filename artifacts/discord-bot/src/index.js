@@ -6,6 +6,7 @@ const { getSettings, saveSettings } = require('./utils/settings');
 const { attachEvents } = require('./handlers/antinukeHandler');
 const { getGuildAutoReact } = require('./utils/autoReactSettings');
 const { handleLinkFilter } = require('./handlers/linkFilterHandler');
+const { sendBackup } = require('./utils/backup');
 
 const client = new Client({
   intents: [
@@ -102,6 +103,9 @@ client.once('ready', async () => {
     totalOrders += (allSettings[guildId].orderCount || 0);
   }
   client.user.setActivity(`${totalOrders} orders completed`, { type: 3 }); // 3 = Watching
+
+  // Auto-backup all data files to backup channel on every startup
+  await sendBackup(client);
 });
 
 // Prevent unhandled Discord API errors from crashing the bot
