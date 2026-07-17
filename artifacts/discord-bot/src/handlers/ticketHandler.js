@@ -291,18 +291,25 @@ async function handleTicketDone(interaction) {
     try {
       const { text } = await buildTranscript(channel);
 
-      // 1. Post transcript in the ticket channel so the user can see/download it
-      const channelEmbed = new EmbedBuilder()
-        .setTitle('📄 Ticket Transcript')
-        .setDescription(
-          `This ticket is being deleted. Here is your full transcript.\n` +
-          `The channel will be deleted in **30 seconds**.`
-        )
-        .setColor(0x3498db)
-        .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
-        .setTimestamp();
-      const channelFile = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
-      await channel.send({ embeds: [channelEmbed], files: [channelFile] }).catch(() => {});
+      // 1. DM transcript to the user who made the ticket
+      if (ownerId) {
+        try {
+          const ticketUser = await channel.client.users.fetch(ownerId);
+          const dmEmbed = new EmbedBuilder()
+            .setTitle('📄 Your Ticket Transcript')
+            .setDescription(
+              `Your ticket **#${channel.name}** has been closed.\n` +
+              `Here is a full copy of your ticket conversation.`
+            )
+            .setColor(0x3498db)
+            .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
+            .setTimestamp();
+          const dmFile = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
+          await ticketUser.send({ embeds: [dmEmbed], files: [dmFile] });
+        } catch {
+          // DMs disabled — skip silently
+        }
+      }
 
       // 2. Send to log channel if configured
       const { logChannelId } = getConfig();
@@ -326,9 +333,8 @@ async function handleTicketDone(interaction) {
       console.error('[Ticket] Failed to generate auto-transcript:', err.message);
     }
 
-    // Remove ticket record and delete channel after 30s so user can read the transcript
+    // Remove ticket record and delete channel
     if (ownerId) removeTicket(ownerId);
-    await new Promise(r => setTimeout(r, 30_000));
     await channel.delete(`Ticket auto-deleted 12 hours after being marked as done by ${markedBy.username}`).catch(() => {});
   }, DONE_AUTO_DELETE_MS);
 
