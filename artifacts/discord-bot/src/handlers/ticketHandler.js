@@ -290,28 +290,21 @@ async function handleTicketDone(interaction) {
     // Generate transcript
     try {
       const { text } = await buildTranscript(channel);
-      const file = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
 
-      // DM the transcript to the ticket owner
-      if (ownerId) {
-        try {
-          const owner = await channel.client.users.fetch(ownerId);
-          const dmEmbed = new EmbedBuilder()
-            .setTitle('📄 Your Ticket Transcript')
-            .setDescription(
-              `Your ticket **#${channel.name}** has been closed and deleted.\n` +
-              `Here is a copy of your ticket transcript.`
-            )
-            .setColor(0x3498db)
-            .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
-            .setTimestamp();
-          await owner.send({ embeds: [dmEmbed], files: [file] });
-        } catch {
-          // DMs disabled — skip silently
-        }
-      }
+      // 1. Post transcript in the ticket channel so the user can see/download it
+      const channelEmbed = new EmbedBuilder()
+        .setTitle('📄 Ticket Transcript')
+        .setDescription(
+          `This ticket is being deleted. Here is your full transcript.\n` +
+          `The channel will be deleted in **30 seconds**.`
+        )
+        .setColor(0x3498db)
+        .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
+        .setTimestamp();
+      const channelFile = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
+      await channel.send({ embeds: [channelEmbed], files: [channelFile] }).catch(() => {});
 
-      // Also log to log channel if configured
+      // 2. Send to log channel if configured
       const { logChannelId } = getConfig();
       if (logChannelId) {
         const logCh = guild.channels.cache.get(logChannelId);
@@ -321,7 +314,7 @@ async function handleTicketDone(interaction) {
             .setDescription(
               `Channel: **#${channel.name}**\n` +
               `Marked done by: <@${markedBy.id}>\n` +
-              `Owner: ${ownerId ? `<@${ownerId}>` : 'Unknown'}`
+              `Ticket owner: ${ownerId ? `<@${ownerId}>` : 'Unknown'}`
             )
             .setColor(0x3498db)
             .setTimestamp();
@@ -333,8 +326,9 @@ async function handleTicketDone(interaction) {
       console.error('[Ticket] Failed to generate auto-transcript:', err.message);
     }
 
-    // Remove ticket record and delete channel
+    // Remove ticket record and delete channel after 30s so user can read the transcript
     if (ownerId) removeTicket(ownerId);
+    await new Promise(r => setTimeout(r, 30_000));
     await channel.delete(`Ticket auto-deleted 12 hours after being marked as done by ${markedBy.username}`).catch(() => {});
   }, DONE_AUTO_DELETE_MS);
 
