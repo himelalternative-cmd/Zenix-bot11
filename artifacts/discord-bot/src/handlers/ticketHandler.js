@@ -36,10 +36,15 @@ const CATEGORY_SLUGS = {
 };
 
 // ── Auto-delete timers (channelId → timeoutId) ────────────────────────────────
-// Stored in memory; cleared if ticket is manually deleted before 24 hrs.
-const _doneTimers = new Map();
+const _doneTimers   = new Map();
+const _doneChannels = new Set(); // tracks channels that have been marked as done
 
-const DONE_AUTO_DELETE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const DONE_AUTO_DELETE_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+// Check whether a channel has been marked as done (used by !pay)
+function isTicketDone(channelId) {
+  return _doneChannels.has(channelId);
+}
 
 // ── Ticket action buttons ─────────────────────────────────────────────────────
 function ticketButtons({ claimDisabled = false, closeDisabled = false, doneDisabled = false, claimLabel = 'Claim' } = {}) {
@@ -50,6 +55,38 @@ function ticketButtons({ claimDisabled = false, closeDisabled = false, doneDisab
     new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji('🗑').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId('ticket_done').setLabel('Mark as Done').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(doneDisabled),
   );
+}
+
+// ── Shared transcript generator ───────────────────────────────────────────────
+async function buildTranscript(channel) {
+  let allMessages = [];
+  let lastId;
+  for (let i = 0; i < 5; i++) {
+    const opts = { limit: 100 };
+    if (lastId) opts.before = lastId;
+    const batch = await channel.messages.fetch(opts).catch(() => null);
+    if (!batch || batch.size === 0) break;
+    allMessages.push(...batch.values());
+    lastId = batch.last()?.id;
+    if (batch.size < 100) break;
+  }
+  allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+
+  const lines = allMessages.map(m => {
+    const time = m.createdAt.toISOString().replace('T', ' ').slice(0, 19);
+    const att  = m.attachments.size > 0 ? ` [${m.attachments.size} attachment(s)]` : '';
+    return `[${time}] ${m.author.tag}: ${m.content}${att}`;
+  });
+
+  const text = [
+    `Transcript for #${channel.name}`,
+    `Generated: ${new Date().toISOString()}`,
+    `Messages: ${lines.length}`,
+    '═'.repeat(60),
+    ...lines,
+  ].join('\n');
+
+  return { text, lines: lines.length };
 }
 
 // ── Select Menu → Create Ticket ───────────────────────────────────────────────
@@ -212,7 +249,7 @@ async function handleTicketDone(interaction) {
   const guild    = interaction.guild;
   const markedBy = interaction.user;
 
-  // Update the ticket embed buttons — disable Done, keep others active
+  // Disable the Done button on the ticket panel
   try {
     const msgs     = await channel.messages.fetch({ limit: 15 });
     const original = msgs.find(m => m.author.id === guild.members.me.id && m.components.length > 0);
@@ -221,12 +258,15 @@ async function handleTicketDone(interaction) {
     }
   } catch {}
 
-  // Lock the channel so the user can't send more messages
+  // Lock the channel
   const ownerId = getOwnerByChannel(channel.id);
   await channel.permissionOverwrites.edit(guild.id, { SendMessages: false }).catch(() => {});
   if (ownerId) {
     await channel.permissionOverwrites.edit(ownerId, { ViewChannel: true, SendMessages: false }).catch(() => {});
   }
+
+  // Mark as done in memory (so !pay knows not to show the Submit button)
+  _doneChannels.add(channel.id);
 
   const deleteAt = Math.floor((Date.now() + DONE_AUTO_DELETE_MS) / 1000);
 
@@ -234,8 +274,7 @@ async function handleTicketDone(interaction) {
     .setTitle('✅ Ticket Marked as Done')
     .setDescription(
       `This ticket has been marked as **Done** by <@${markedBy.id}>.\n\n` +
-      `🕐 This channel will be **automatically deleted** <t:${deleteAt}:R> (<t:${deleteAt}:F>).\n\n` +
-      `Use 📄 **Transcript** to save a log before it's deleted.`
+      `🕐 A transcript will be sent to the ticket owner and this channel will be **automatically deleted** <t:${deleteAt}:R> (<t:${deleteAt}:F>).`
     )
     .setColor(0x2ecc71)
     .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
@@ -243,12 +282,60 @@ async function handleTicketDone(interaction) {
 
   await interaction.reply({ embeds: [doneEmbed] });
 
-  // Schedule auto-delete after 24 hours
+  // Schedule auto-transcript + DM + delete after 12 hours
   const timerId = setTimeout(async () => {
     _doneTimers.delete(channel.id);
-    const ownId = getOwnerByChannel(channel.id);
-    if (ownId) removeTicket(ownId);
-    await channel.delete(`Ticket auto-deleted 24 hours after being marked as done by ${markedBy.username}`).catch(() => {});
+    _doneChannels.delete(channel.id);
+
+    // Generate transcript
+    try {
+      const { text } = await buildTranscript(channel);
+      const file = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
+
+      // DM the transcript to the ticket owner
+      if (ownerId) {
+        try {
+          const owner = await channel.client.users.fetch(ownerId);
+          const dmEmbed = new EmbedBuilder()
+            .setTitle('📄 Your Ticket Transcript')
+            .setDescription(
+              `Your ticket **#${channel.name}** has been closed and deleted.\n` +
+              `Here is a copy of your ticket transcript.`
+            )
+            .setColor(0x3498db)
+            .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
+            .setTimestamp();
+          await owner.send({ embeds: [dmEmbed], files: [file] });
+        } catch {
+          // DMs disabled — skip silently
+        }
+      }
+
+      // Also log to log channel if configured
+      const { logChannelId } = getConfig();
+      if (logChannelId) {
+        const logCh = guild.channels.cache.get(logChannelId);
+        if (logCh) {
+          const logEmbed = new EmbedBuilder()
+            .setTitle('📄 Ticket Auto-Deleted (Mark as Done)')
+            .setDescription(
+              `Channel: **#${channel.name}**\n` +
+              `Marked done by: <@${markedBy.id}>\n` +
+              `Owner: ${ownerId ? `<@${ownerId}>` : 'Unknown'}`
+            )
+            .setColor(0x3498db)
+            .setTimestamp();
+          const logFile = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
+          await logCh.send({ embeds: [logEmbed], files: [logFile] }).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error('[Ticket] Failed to generate auto-transcript:', err.message);
+    }
+
+    // Remove ticket record and delete channel
+    if (ownerId) removeTicket(ownerId);
+    await channel.delete(`Ticket auto-deleted 12 hours after being marked as done by ${markedBy.username}`).catch(() => {});
   }, DONE_AUTO_DELETE_MS);
 
   _doneTimers.set(channel.id, timerId);
@@ -260,35 +347,8 @@ async function handleTicketTranscript(interaction) {
   const channel = interaction.channel;
   const { logChannelId } = getConfig();
 
-  let allMessages = [];
-  let lastId;
-  for (let i = 0; i < 5; i++) {
-    const opts = { limit: 100 };
-    if (lastId) opts.before = lastId;
-    const batch = await channel.messages.fetch(opts).catch(() => null);
-    if (!batch || batch.size === 0) break;
-    allMessages.push(...batch.values());
-    lastId = batch.last()?.id;
-    if (batch.size < 100) break;
-  }
-
-  allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-  const lines = allMessages.map(m => {
-    const time = m.createdAt.toISOString().replace('T', ' ').slice(0, 19);
-    const att  = m.attachments.size > 0 ? ` [${m.attachments.size} attachment(s)]` : '';
-    return `[${time}] ${m.author.tag}: ${m.content}${att}`;
-  });
-
-  const transcript = [
-    `Transcript for #${channel.name}`,
-    `Generated: ${new Date().toISOString()}`,
-    `Messages: ${lines.length}`,
-    '═'.repeat(60),
-    ...lines,
-  ].join('\n');
-
-  const makeFile = () => new AttachmentBuilder(Buffer.from(transcript, 'utf-8'), { name: `transcript-${channel.name}.txt` });
+  const { text } = await buildTranscript(channel);
+  const makeFile = () => new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
 
   if (logChannelId) {
     const logCh = interaction.guild.channels.cache.get(logChannelId);
@@ -335,6 +395,7 @@ async function handleTicketDeleteConfirm(interaction) {
     clearTimeout(timerId);
     _doneTimers.delete(channel.id);
   }
+  _doneChannels.delete(channel.id);
 
   await interaction.reply({ content: '🗑 Deleting ticket...', ephemeral: true });
   setTimeout(() => channel.delete().catch(() => {}), 2000);
@@ -345,6 +406,7 @@ async function handleTicketDeleteCancel(interaction) {
 }
 
 module.exports = {
+  isTicketDone,
   handleTicketSelect,
   handleTicketClose,
   handleTicketClaim,
