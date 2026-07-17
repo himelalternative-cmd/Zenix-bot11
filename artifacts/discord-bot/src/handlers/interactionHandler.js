@@ -2,7 +2,6 @@ const { EmbedBuilder } = require('discord.js');
 const { handlePayButton, handleTrxModal, handlePayConfirm, handlePayConfirmModal, handlePayReject, handleRejectModal } = require('./payHandler');
 const { handleDmMessageModal } = require('../commands/setup');
 const { handleVerifyButton, handleVerifyCaptcha } = require('./verifyHandler');
-const { handleGameInteraction, isGameInteraction } = require('./gameHandler');
 const {
   handleTicketSelect,
   handleTicketClose,
@@ -49,27 +48,6 @@ async function handleDmModal(interaction) {
   }
 }
 
-// Route games hub select menu → start the chosen game
-async function handleGamesSelectHub(interaction, client) {
-  const game = interaction.values[0];
-  const gameCmd = client.commands.get('game');
-  if (!gameCmd) return interaction.reply({ content: '❌ Game system not loaded.', ephemeral: true });
-
-  const descriptions = {
-    tictactoe:   '**❌ Tic Tac Toe** — Use `/game play tictactoe opponent:@user` to challenge someone.',
-    rps:         '**🪨 Rock Paper Scissors** — Use `/game play rps mode:bot` or `mode:pvp opponent:@user`.',
-    guessnumber: '**🎯 Guess The Number** — Use `/game play guessnumber difficulty:easy/medium/hard`.',
-    blackjack:   '**🃏 Blackjack** — Use `/game play blackjack` to play against the dealer.',
-    coinflip:    '**💰 Coin Flip** — Use `/game play coinflip side:heads` or `side:tails`.',
-    trivia:      '**❓ Trivia** — Use `/game play trivia category:gaming` (or any category).',
-    hangman:     '**🎯 Hangman** — Use `/game play hangman category:movies` (or any category).',
-    wyr:         '**🎲 Would You Rather** — Use `/game play wyr` to start a vote.',
-  };
-
-  const hint = descriptions[game] || 'Use `/game play` to start this game.';
-  await interaction.reply({ content: `${hint}\n\nOr use \`/game play\` with the **game** option set to \`${game}\`.`, ephemeral: true });
-}
-
 async function handleInteraction(client, interaction) {
   // ── Slash Commands ──────────────────────────────────────────────────────────
   if (interaction.isChatInputCommand()) {
@@ -98,7 +76,6 @@ async function handleInteraction(client, interaction) {
   // ── Select Menus ────────────────────────────────────────────────────────────
   if (interaction.isStringSelectMenu()) {
     if (interaction.customId === 'ticket_category_select') return handleTicketSelect(interaction);
-    if (interaction.customId === 'games_select_hub')       return handleGamesSelectHub(interaction, client);
     return;
   }
 
@@ -106,7 +83,6 @@ async function handleInteraction(client, interaction) {
   if (interaction.isButton()) {
     const id = interaction.customId;
     if (id === 'verify_btn')            return handleVerifyButton(interaction);
-    if (isGameInteraction(id))          return handleGameInteraction(interaction);
     if (id.startsWith('pay_submit_btn')) return handlePayButton(interaction);
     if (id.startsWith('pay_confirm'))    return handlePayConfirm(interaction);
     if (id.startsWith('pay_reject'))     return handlePayReject(interaction);
@@ -123,7 +99,6 @@ async function handleInteraction(client, interaction) {
   // ── Modals ──────────────────────────────────────────────────────────────────
   if (interaction.isModalSubmit()) {
     if (interaction.customId === 'verify_captcha_modal')      return handleVerifyCaptcha(interaction);
-    if (isGameInteraction(interaction.customId))             return handleGameInteraction(interaction);
     if (interaction.customId.startsWith('pay_trx_modal'))     return handleTrxModal(interaction);
     if (interaction.customId.startsWith('pay_confirm_modal')) return handlePayConfirmModal(interaction);
     if (interaction.customId.startsWith('pay_reject_modal'))  return handleRejectModal(interaction);
