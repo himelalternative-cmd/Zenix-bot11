@@ -13,12 +13,15 @@ module.exports = {
 
     // ── add ───────────────────────────────────────────────────────────────────
     .addSubcommand(sub =>
-      sub.setName('add').setDescription('Add delivery codes to an item (separate with commas)')
+      sub.setName('add').setDescription('Add delivery codes to an item (creates the item if it doesn\'t exist yet)')
         .addStringOption(opt =>
           opt.setName('item').setDescription('Item name').setRequired(true).setAutocomplete(true)
         )
         .addStringOption(opt =>
           opt.setName('code').setDescription('Codes to add, separated by commas (e.g. KEY1, KEY2, KEY3)').setRequired(true)
+        )
+        .addIntegerOption(opt =>
+          opt.setName('price').setDescription('Price in Zenix Points — required only when creating a new item').setRequired(false).setMinValue(0)
         )
     )
 
@@ -89,28 +92,55 @@ module.exports = {
 
     if (!settings.items) settings.items = [];
     const itemArg = interaction.options.getString('item').trim();
-    const idx     = settings.items.findIndex(i => itemName(i).toLowerCase() === itemArg.toLowerCase());
+    let idx       = settings.items.findIndex(i => itemName(i).toLowerCase() === itemArg.toLowerCase());
 
-    if (idx === -1 || typeof settings.items[idx] === 'string') {
-      return interaction.reply({ content: `❌ Item \`${itemArg}\` not found. Use \`/setup item add\` first.`, ephemeral: true });
-    }
-
-    const entry = settings.items[idx];
-    if (!entry.stock) entry.stock = [];
-
+    // ── /stock add: create the item on-the-fly if it doesn't exist ────────────
     if (sub === 'add') {
       const raw   = interaction.options.getString('code');
       const codes = raw.split(',').map(c => c.trim()).filter(c => c.length > 0);
       if (!codes.length) {
         return interaction.reply({ content: '❌ No valid codes found. Separate multiple codes with commas.', ephemeral: true });
       }
+
+      let isNew = false;
+      if (idx === -1 || typeof settings.items[idx] === 'string') {
+        // Item doesn't exist yet — create it
+        const price = interaction.options.getInteger('price');
+        if (price === null) {
+          return interaction.reply({
+            content: `❌ **${itemArg}** doesn't exist yet. Provide a \`price\` to create it.\nExample: \`/stock add item:${itemArg} code:KEY1 price:500\``,
+            ephemeral: true,
+          });
+        }
+        // Replace old string entry or push new object
+        const newItem = { name: itemArg, price, stock: [] };
+        if (idx !== -1) {
+          settings.items[idx] = newItem;
+        } else {
+          settings.items.push(newItem);
+          idx = settings.items.length - 1;
+        }
+        isNew = true;
+      }
+
+      const entry = settings.items[idx];
+      if (!entry.stock) entry.stock = [];
       entry.stock.push(...codes);
       saveGuildSettings(interaction.guildId, settings);
+      const created = isNew ? ` (item created at **${entry.price.toLocaleString()} ZP**)` : '';
       return interaction.reply({
-        content: `✅ Added **${codes.length}** code${codes.length !== 1 ? 's' : ''} to **${entry.name}**. Total stock: **${entry.stock.length}**.`,
+        content: `✅ Added **${codes.length}** code${codes.length !== 1 ? 's' : ''} to **${entry.name}**${created}. Total stock: **${entry.stock.length}**.`,
         ephemeral: true,
       });
     }
+
+    // All other subcommands require the item to already exist
+    if (idx === -1 || typeof settings.items[idx] === 'string') {
+      return interaction.reply({ content: `❌ Item \`${itemArg}\` not found. Use \`/stock add item:${itemArg} code:<codes> price:<price>\` to create it.`, ephemeral: true });
+    }
+
+    const entry = settings.items[idx];
+    if (!entry.stock) entry.stock = [];
 
     if (sub === 'view') {
       if (!entry.stock.length) {
