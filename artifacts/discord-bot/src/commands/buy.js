@@ -43,21 +43,27 @@ module.exports = {
     ),
 
   async autocomplete(interaction) {
-    const focused  = interaction.options.getFocused().toLowerCase();
-    const settings = getGuildSettings(interaction.guildId);
-    const items    = (settings.items || []).filter(i => typeof i === 'object' && i.price != null);
-    const choices  = items
-      .filter(i => i.name.toLowerCase().includes(focused))
-      .slice(0, 25)
-      .map(i => {
-        const stockCount = (i.stock || []).length;
-        const label      = stockCount > 0
-          ? `${i.name}  —  ${i.price.toLocaleString()} ZP  (${stockCount} in stock)`
-          : `${i.name}  —  ${i.price.toLocaleString()} ZP  (out of stock)`;
-        return { name: label, value: i.name };
-      });
-
-    await interaction.respond(choices.slice(0, 25));
+    try {
+      const focused  = (interaction.options.getFocused() ?? '').toLowerCase();
+      const settings = interaction.guildId ? getGuildSettings(interaction.guildId) : {};
+      const items    = (settings.items || []).filter(
+        i => i && typeof i === 'object' && i.name && i.price != null
+      );
+      const choices  = items
+        .filter(i => i.name.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map(i => {
+          const stockCount = Array.isArray(i.stock) ? i.stock.length : 0;
+          const label      = stockCount > 0
+            ? `${i.name}  —  ${i.price.toLocaleString()} ZP  (${stockCount} in stock)`
+            : `${i.name}  —  ${i.price.toLocaleString()} ZP  (out of stock)`;
+          return { name: label.slice(0, 100), value: i.name };
+        });
+      await interaction.respond(choices);
+    } catch (err) {
+      console.error('[buy] Autocomplete error:', err);
+      await interaction.respond([]).catch(() => {});
+    }
   },
 
   async execute(interaction) {

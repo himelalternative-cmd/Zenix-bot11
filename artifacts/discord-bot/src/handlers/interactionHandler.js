@@ -68,7 +68,14 @@ async function handleInteraction(client, interaction) {
   if (interaction.isAutocomplete()) {
     const command = client.commands.get(interaction.commandName);
     if (command?.autocomplete) {
-      await command.autocomplete(interaction).catch(err => console.error('Autocomplete error:', err));
+      try {
+        await command.autocomplete(interaction);
+      } catch (err) {
+        console.error(`Autocomplete error in /${interaction.commandName}:`, err);
+        await interaction.respond([]).catch(() => {});
+      }
+    } else {
+      await interaction.respond([]).catch(() => {});
     }
     return;
   }
