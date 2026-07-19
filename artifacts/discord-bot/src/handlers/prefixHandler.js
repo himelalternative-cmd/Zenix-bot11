@@ -1,6 +1,6 @@
 const { EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { handlePayCommand } = require('./payHandler');
-const { handleRbxAccCommand } = require('./rbxHandler');
+const { handleRbxAccCommand, handleIggCommand } = require('./rbxHandler');
 const { getOwnerByChannel, removeTicket } = require('../utils/tickets');
 const { isTicketDone } = require('./ticketHandler');
 
@@ -87,6 +87,12 @@ async function handlePrefix(message) {
   // !rbxacc — send the Robux purchase embed (admin only)
   if (/^!rbxacc$/i.test(content)) {
     await handleRbxAccCommand(message);
+    return;
+  }
+
+  // !igg — send the In-Game Gifting embed (admin only)
+  if (/^!igg$/i.test(content)) {
+    await handleIggCommand(message);
     return;
   }
 
