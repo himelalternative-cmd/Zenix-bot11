@@ -304,6 +304,15 @@ async function handleIggBuyButton(interaction) {
         .setRequired(true)
         .setMaxLength(50)
     ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('gamepass_name')
+        .setLabel('Which gamepass do you want to buy?')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. Gamepass 1, Gamepass 2, Gamepass 3')
+        .setRequired(true)
+        .setMaxLength(100)
+    ),
   );
 
   await interaction.showModal(modal);
@@ -315,6 +324,7 @@ async function handleIggOrderModal(interaction) {
   const gamepassRaw    = interaction.fields.getTextInputValue('gamepass_price').trim();
   const gameName       = interaction.fields.getTextInputValue('game_name').trim();
   const giftingType    = interaction.fields.getTextInputValue('gifting_type').trim();
+  const gamepassName   = interaction.fields.getTextInputValue('gamepass_name').trim();
 
   // Parse gamepass price — allow "400 robux", "400 R$", plain "400"
   const priceMatch = gamepassRaw.match(/(\d+(?:\.\d+)?)/);
@@ -372,12 +382,13 @@ async function handleIggOrderModal(interaction) {
     )
     .setColor(0x000000)
     .addFields(
-      { name: '👤 Buyer',             value: `<@${userId}>`,                              inline: true },
-      { name: '🎮 Roblox Username',   value: `\`${robloxUsername}\``,                     inline: true },
+      { name: '👤 Buyer',             value: `<@${userId}>`,                               inline: true },
+      { name: '🎮 Roblox Username',   value: `\`${robloxUsername}\``,                      inline: true },
       { name: '🎁 Gamepass Price',    value: `**${gamepassPrice.toLocaleString()} Robux**`, inline: true },
-      { name: '🕹️ Game Name',        value: `\`${gameName}\``,                            inline: true },
-      { name: '🌐 Gifting Type',      value: `\`${giftingType}\``,                        inline: true },
-      { name: '💎 ZP Paid',           value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
+      { name: '🕹️ Game Name',        value: `\`${gameName}\``,                             inline: true },
+      { name: '🎟️ Gamepass Name',    value: `\`${gamepassName}\``,                         inline: true },
+      { name: '🌐 Gifting Type',      value: `\`${giftingType}\``,                         inline: true },
+      { name: '💎 ZP Paid',           value: `**${zpCost.toLocaleString()} ZP**`,          inline: true },
     )
     .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
     .setTimestamp();
@@ -411,6 +422,7 @@ async function handleIggDone(interaction) {
   const robloxUsername = field('Roblox Username').replace(/`/g, '');
   const gamepassPrice  = field('Gamepass Price').replace(/\*\*/g, '');
   const gameName       = field('Game Name').replace(/`/g, '');
+  const gamepassName   = field('Gamepass Name').replace(/`/g, '');
   const giftingType    = field('Gifting Type').replace(/`/g, '');
   const zpPaid         = field('ZP Paid').replace(/\*\*/g, '');
 
@@ -430,6 +442,7 @@ async function handleIggDone(interaction) {
         `• Roblox User : \`${robloxUsername}\`\n` +
         `• Gamepass Price : ${gamepassPrice}\n` +
         `• Game : \`${gameName}\`\n` +
+        `• Gamepass : \`${gamepassName}\`\n` +
         `• Gifting Type : \`${giftingType}\`\n` +
         `• ZP Paid : ${zpPaid}\n` +
         `• Completed by : <@${interaction.user.id}>\n` +
