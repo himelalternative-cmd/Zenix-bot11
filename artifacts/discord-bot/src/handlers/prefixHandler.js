@@ -1,5 +1,6 @@
 const { EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { handlePayCommand } = require('./payHandler');
+const { handleRbxAccCommand } = require('./rbxHandler');
 const { getOwnerByChannel, removeTicket } = require('../utils/tickets');
 const { isTicketDone } = require('./ticketHandler');
 
@@ -80,6 +81,12 @@ async function handlePrefix(message) {
 
     await message.reply({ embeds: [embed] });
     setTimeout(() => channel.delete().catch(() => {}), 3000);
+    return;
+  }
+
+  // !rbxacc — send the Robux purchase embed (admin only)
+  if (/^!rbxacc$/i.test(content)) {
+    await handleRbxAccCommand(message);
     return;
   }
 
