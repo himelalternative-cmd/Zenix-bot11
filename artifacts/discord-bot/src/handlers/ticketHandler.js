@@ -195,8 +195,11 @@ async function handleTicketClose(interaction) {
   }
 
   try {
-    const msgs     = await channel.messages.fetch({ limit: 15 });
-    const original = msgs.find(m => m.author.id === guild.members.me.id && m.components.length > 0);
+    const msgs     = await channel.messages.fetch({ limit: 20 });
+    const original = msgs.find(m =>
+      m.author.id === guild.members.me.id &&
+      m.components.some(row => row.components.some(c => c.customId === 'ticket_close'))
+    );
     if (original) await original.edit({ components: [ticketButtons({ closeDisabled: true })] });
   } catch {}
 
@@ -220,8 +223,11 @@ async function handleTicketClaim(interaction) {
   }
 
   try {
-    const msgs     = await interaction.channel.messages.fetch({ limit: 15 });
-    const original = msgs.find(m => m.author.id === interaction.guild.members.me.id && m.components.length > 0);
+    const msgs     = await interaction.channel.messages.fetch({ limit: 20 });
+    const original = msgs.find(m =>
+      m.author.id === interaction.guild.members.me.id &&
+      m.components.some(row => row.components.some(c => c.customId === 'ticket_close'))
+    );
     if (original) {
       await original.edit({
         components: [ticketButtons({ claimDisabled: true, claimLabel: `Claimed by ${interaction.user.username}` })],
@@ -251,8 +257,11 @@ async function handleTicketDone(interaction) {
 
   // Disable the Done button on the ticket panel
   try {
-    const msgs     = await channel.messages.fetch({ limit: 15 });
-    const original = msgs.find(m => m.author.id === guild.members.me.id && m.components.length > 0);
+    const msgs     = await channel.messages.fetch({ limit: 20 });
+    const original = msgs.find(m =>
+      m.author.id === guild.members.me.id &&
+      m.components.some(row => row.components.some(c => c.customId === 'ticket_close'))
+    );
     if (original) {
       await original.edit({ components: [ticketButtons({ doneDisabled: true })] });
     }

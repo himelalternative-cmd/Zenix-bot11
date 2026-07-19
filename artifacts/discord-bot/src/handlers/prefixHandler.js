@@ -31,7 +31,10 @@ async function handlePrefix(message) {
     // Disable the Close button on the original ticket embed if present
     try {
       const msgs = await channel.messages.fetch({ limit: 20 });
-      const original = msgs.find(m => m.author.id === guild.members.me.id && m.components.length > 0);
+      const original = msgs.find(m =>
+        m.author.id === guild.members.me.id &&
+        m.components.some(row => row.components.some(c => c.customId === 'ticket_close'))
+      );
       if (original) {
         const disabledRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Secondary).setDisabled(true),
