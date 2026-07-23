@@ -43,6 +43,8 @@ function getGuildSettings(guildId) {
   if (!all[guildId]) {
     all[guildId] = {
       orderChannelId: null,
+      pendingChannelId: null,
+      botCmdChannelId: null,
       orderTitle: '▶ Order Details:',
       orderIdPrefix: 'ORDER',
       orderColor: 0x9b59b6,
@@ -54,6 +56,11 @@ function getGuildSettings(guildId) {
     };
     saveSettings(all);
   }
+  // Backfill new fields for existing guilds
+  let changed = false;
+  if (!('pendingChannelId' in all[guildId])) { all[guildId].pendingChannelId = null; changed = true; }
+  if (!('botCmdChannelId'  in all[guildId])) { all[guildId].botCmdChannelId  = null; changed = true; }
+  if (changed) saveSettings(all);
   return all[guildId];
 }
 

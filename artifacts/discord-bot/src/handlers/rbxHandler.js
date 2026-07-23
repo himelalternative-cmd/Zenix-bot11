@@ -11,21 +11,39 @@ const {
 const { getBalance, removeBalance } = require('../utils/zenixPoints');
 const { getGuildSettings, saveGuildSettings, getSettings, generateOrderId } = require('../utils/settings');
 const { logPurchase } = require('../utils/stockHistory');
+const { getPendingOrder, setPendingOrder, removePendingOrder } = require('../utils/pendingOrders');
+const { getOwnerByChannel } = require('../utils/tickets');
 
-const ZP_PER_ROBUX = 0.9; // 1 Robux = 0.9 ZP
+const ZP_PER_ROBUX     = 0.9;   // !buy robux: 1 Robux = 0.9 ZP
+const ZP_PER_ROBUX_IGG = 0.75;  // !igg: 1 Robux = 0.75 ZP
 
-// ── !rbxacc — admin sends the Robux purchase embed ───────────────────────────
-async function handleRbxAccCommand(message) {
-  if (!message.member || !message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-    return message.reply({ content: '❌ You need **Administrator** permission to use this command.' });
+// ═══════════════════════════════════════════════════════════════════════════
+//  !buy robux / !buy rbx / !buy rb — any member, ticket or bot-cmd only
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── Send the order embed with a button ──────────────────────────────────────
+async function handleBuyRobuxCommand(message) {
+  const settings = getGuildSettings(message.guild.id);
+
+  const isTicket = !!getOwnerByChannel(message.channel.id);
+  const isBotCmd = settings.botCmdChannelId === message.channel.id;
+
+  if (!isTicket && !isBotCmd) {
+    const reply = await message.reply({
+      content:
+        '❌ This command can only be used inside a **ticket** or the configured **bot commands channel**.\n' +
+        '_Ask an admin to set one with `/set botcmd channel`._',
+    });
+    setTimeout(() => reply.delete().catch(() => {}), 8000);
+    return;
   }
 
   const embed = new EmbedBuilder()
     .setTitle('🎮 Robux Purchase')
     .setDescription(
-      'Fill this form to buy **Robux**.\n\n' +
+      'Click the button below to fill the order form.\n\n' +
       '> 💎 **Rate:** 1 Robux = **0.9 ZP**\n\n' +
-      'Click the button below to place your order.'
+      '_You may only have one pending order at a time._'
     )
     .setColor(0x000000)
     .setFooter({ text: message.guild.name, iconURL: message.guild.iconURL() ?? undefined })
@@ -34,53 +52,60 @@ async function handleRbxAccCommand(message) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('rbx_buy_btn')
-      .setLabel('Buy Robux')
-      .setEmoji('🎮')
+      .setLabel('Fill Order Form')
+      .setEmoji('📋')
       .setStyle(ButtonStyle.Primary)
   );
 
   await message.channel.send({ embeds: [embed], components: [row] });
-
-  // Delete the command message to keep the channel clean
   await message.delete().catch(() => {});
 }
 
-// ── "Buy Robux" button — open modal ─────────────────────────────────────────
-async function handleRbxBuyButton(interaction) {
+// ── Button clicked → check duplicate → show modal ───────────────────────────
+async function handleBuyRobuxButton(interaction) {
+  const existing = getPendingOrder(interaction.user.id);
+  if (existing) {
+    return interaction.reply({
+      content:
+        '❌ You already have a **pending Robux order**. ' +
+        'Please wait for it to be confirmed by an admin before submitting a new one.',
+      ephemeral: true,
+    });
+  }
+
   const modal = new ModalBuilder()
     .setCustomId('rbx_order_modal')
     .setTitle('Robux Order Form');
 
-  const usernameInput = new TextInputBuilder()
-    .setCustomId('roblox_username')
-    .setLabel('Roblox Username')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('Enter your Roblox username')
-    .setRequired(true)
-    .setMaxLength(20);
-
-  const amountInput = new TextInputBuilder()
-    .setCustomId('robux_amount')
-    .setLabel('How much Robux do you want to buy?')
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder('e.g. 100')
-    .setRequired(true)
-    .setMaxLength(8);
-
   modal.addComponents(
-    new ActionRowBuilder().addComponents(usernameInput),
-    new ActionRowBuilder().addComponents(amountInput),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('roblox_username')
+        .setLabel('Roblox Username')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('Enter your Roblox username')
+        .setRequired(true)
+        .setMaxLength(20)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId('robux_amount')
+        .setLabel('How much Robux do you want to buy?')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. 100')
+        .setRequired(true)
+        .setMaxLength(8)
+    ),
   );
 
   await interaction.showModal(modal);
 }
 
-// ── Modal submitted — deduct ZP and post order confirmation ──────────────────
-async function handleRbxOrderModal(interaction) {
+// ── Modal submitted → validate → deduct ZP → post to pending channel ─────────
+async function handleBuyRobuxModal(interaction) {
   const robloxUsername = interaction.fields.getTextInputValue('roblox_username').trim();
   const robuxRaw       = interaction.fields.getTextInputValue('robux_amount').trim();
 
-  // Validate amount
   const robuxAmount = parseInt(robuxRaw, 10);
   if (isNaN(robuxAmount) || robuxAmount <= 0) {
     return interaction.reply({
@@ -89,161 +114,249 @@ async function handleRbxOrderModal(interaction) {
     });
   }
 
-  const zpCost     = Math.ceil(robuxAmount * ZP_PER_ROBUX);
-  const userId     = interaction.user.id;
-  const balance    = getBalance(userId);
+  const zpCost  = Math.ceil(robuxAmount * ZP_PER_ROBUX);
+  const userId  = interaction.user.id;
+  const balance = getBalance(userId);
 
-  // Check balance
+  // Double-check duplicate (race-condition guard)
+  if (getPendingOrder(userId)) {
+    return interaction.reply({
+      content: '❌ You already have a pending Robux order. Please wait for it to be confirmed.',
+      ephemeral: true,
+    });
+  }
+
   if (balance < zpCost) {
     const needed = zpCost - balance;
-    const embed  = new EmbedBuilder()
-      .setTitle('❌ Insufficient Zenix Points')
-      .setColor(0xe74c3c)
-      .addFields(
-        { name: '🎮 Robux Amount', value: `**${robuxAmount.toLocaleString()}**`,       inline: true },
-        { name: '💲 ZP Cost',      value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
-        { name: '💎 Your Balance', value: `**${balance.toLocaleString()} ZP**`,        inline: true },
-        { name: '⚠️ Still Needed', value: `**${needed.toLocaleString()} ZP**`,         inline: true },
-      )
-      .setFooter({ text: 'Powered by Zenix Realm' })
-      .setTimestamp();
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('❌ Insufficient Zenix Points')
+          .setColor(0xe74c3c)
+          .addFields(
+            { name: '🎮 Robux Amount', value: `**${robuxAmount.toLocaleString()}**`,    inline: true },
+            { name: '💲 ZP Cost',      value: `**${zpCost.toLocaleString()} ZP**`,      inline: true },
+            { name: '💎 Your Balance', value: `**${balance.toLocaleString()} ZP**`,     inline: true },
+            { name: '⚠️ Still Needed', value: `**${needed.toLocaleString()} ZP**`,      inline: true },
+          )
+          .setFooter({ text: 'Powered by Zenix Realm' })
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
   }
 
   // Deduct ZP
-  const newBalance  = removeBalance(userId, zpCost);
-  const timestamp   = Math.floor(Date.now() / 1000);
+  const newBalance = removeBalance(userId, zpCost);
 
-  // Encode data into customId for the Done Order button (max 100 chars total)
-  const encodedUser = encodeURIComponent(robloxUsername);
-  const doneId = `rbx_done:${userId}:${encodedUser}:${robuxAmount}:${zpCost}:${timestamp}`;
+  // Determine source (ticket vs bot-cmd)
+  const isTicket        = !!getOwnerByChannel(interaction.channelId);
+  const sourceType      = isTicket ? 'ticket' : 'botcmd';
+  const sourceChannelId = interaction.channelId;
+  const timestamp       = Math.floor(Date.now() / 1000);
 
-  // Ephemeral confirmation to buyer
-  const confirmEmbed = new EmbedBuilder()
-    .setTitle('✅ Order Placed!')
-    .setDescription(
-      `**${zpCost.toLocaleString()} ZP** has been deducted from your balance.\n` +
-      `💎 **Remaining Balance:** ${newBalance.toLocaleString()} ZP`
-    )
-    .setColor(0x2ecc71)
-    .setTimestamp();
-  await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
+  // Save pending order
+  setPendingOrder(userId, {
+    userId,
+    guildId: interaction.guildId,
+    robloxUsername,
+    robuxAmount,
+    zpCost,
+    sourceChannelId,
+    sourceType,
+    timestamp,
+  });
 
-  // Public order confirmation embed in the channel
-  const orderEmbed = new EmbedBuilder()
-    .setTitle('🎮 Robux Order Placed Successfully')
-    .setDescription(
-      `Your Robux Order is Placed Successfully.\n` +
-      `Wait for an admin or owner to Complete Your Order.\n` +
-      `Thanks.\n\n` +
-      `━━━━━━━━━━━━━━━━━━━━━━`
-    )
-    .setColor(0x000000)
-    .addFields(
-      { name: '👤 Buyer',           value: `<@${userId}>`,                             inline: true },
-      { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                    inline: true },
-      { name: '💫 Robux Amount',    value: `**${robuxAmount.toLocaleString()} Robux**`, inline: true },
-      { name: '💎 ZP Paid',         value: `**${zpCost.toLocaleString()} ZP**`,        inline: true },
-    )
+  // Ephemeral confirmation
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('✅ Order Submitted!')
+        .setDescription(
+          `**${zpCost.toLocaleString()} ZP** has been deducted from your balance.\n` +
+          `💎 **Remaining Balance:** ${newBalance.toLocaleString()} ZP\n\n` +
+          `An admin will confirm your order shortly.`
+        )
+        .setColor(0x2ecc71)
+        .setTimestamp(),
+    ],
+    ephemeral: true,
+  });
+
+  // Info embed in the source channel (no confirm button — view only)
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('🎮 Robux Order Submitted — Awaiting Confirmation')
+        .setDescription('An admin will review and confirm this order shortly.')
+        .setColor(0xf39c12)
+        .addFields(
+          { name: '👤 Buyer',           value: `<@${userId}>`,                              inline: true },
+          { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                     inline: true },
+          { name: '💫 Robux Amount',    value: `**${robuxAmount.toLocaleString()} Robux**`, inline: true },
+          { name: '💎 ZP Paid',         value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
+        )
+        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+        .setTimestamp(),
+    ],
+  });
+
+  // Post to private pending channel with Confirm button
+  const settings      = getGuildSettings(interaction.guildId);
+  const pendingChanId = settings.pendingChannelId;
+  if (!pendingChanId) return;
+
+  const pendingChannel = interaction.guild.channels.cache.get(pendingChanId);
+  if (!pendingChannel) return;
+
+  const sourceLabel = sourceType === 'ticket'
+    ? `<#${sourceChannelId}> (Ticket)`
+    : `<#${sourceChannelId}> (Bot CMD)`;
+
+  await pendingChannel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('📋 Pending Robux Order')
+        .setDescription('A new Robux order is waiting for confirmation.')
+        .setColor(0xe67e22)
+        .addFields(
+          { name: '👤 Buyer',           value: `<@${userId}>`,                              inline: true },
+          { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                     inline: true },
+          { name: '💫 Robux Amount',    value: `**${robuxAmount.toLocaleString()} Robux**`, inline: true },
+          { name: '💎 ZP Paid',         value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
+          { name: '📍 Source',          value: sourceLabel,                                  inline: true },
+          { name: '⏰ Submitted',       value: `<t:${timestamp}:R>`,                        inline: true },
+        )
+        .setFooter({ text: 'Only admins can confirm orders here.' })
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`rbx_confirm:${userId}`)
+          .setLabel('Confirm Order')
+          .setEmoji('✅')
+          .setStyle(ButtonStyle.Success)
+      ),
+    ],
+  });
+}
+
+// ── Admin confirms order from the pending channel ────────────────────────────
+async function handleRbxConfirm(interaction) {
+  if (
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
+    interaction.member.id !== interaction.guild.ownerId
+  ) {
+    return interaction.reply({ content: '❌ Only administrators can confirm orders.', ephemeral: true });
+  }
+
+  const buyerId = interaction.customId.split(':')[1];
+  const order   = getPendingOrder(buyerId);
+
+  if (!order) {
+    const disabledRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('rbx_confirm_disabled')
+        .setLabel('Already Processed')
+        .setEmoji('⚠️')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    );
+    return interaction.update({ embeds: interaction.message.embeds, components: [disabledRow] });
+  }
+
+  const { guildId, robloxUsername, robuxAmount, zpCost, sourceChannelId, sourceType } = order;
+  const settings  = getGuildSettings(guildId);
+  const orderId   = generateOrderId(settings.orderIdPrefix || 'ORDER');
+  const now       = Math.floor(Date.now() / 1000);
+  const orderColor = settings.orderColor ?? 0x010101;
+
+  const orderLines =
+    `• Handler : Robux Buy\n` +
+    `• Buyer : <@${buyerId}>\n` +
+    `• Roblox User : \`${robloxUsername}\`\n` +
+    `• Robux : ${robuxAmount.toLocaleString()} Robux\n` +
+    `• ZP Paid : ${zpCost.toLocaleString()} ZP\n` +
+    `• Completed by : <@${interaction.user.id}>\n` +
+    `• Order id : ${orderId}\n` +
+    `• Time : <t:${now}:R>`;
+
+  const completionEmbed = new EmbedBuilder()
+    .setTitle(settings.orderTitle || '▶ Order Details:')
+    .setDescription(orderLines)
+    .setColor(orderColor)
     .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
     .setTimestamp();
 
-  const doneRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(doneId)
-      .setLabel('Done Order')
-      .setEmoji('✅')
-      .setStyle(ButtonStyle.Success)
-  );
-
-  await interaction.channel.send({ embeds: [orderEmbed], components: [doneRow] });
-}
-
-// ── "Done Order" button — post to order channel ──────────────────────────────
-async function handleRbxDone(interaction) {
-  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
-      interaction.member.id !== interaction.guild.ownerId) {
-    return interaction.reply({ content: '❌ Only administrators can complete orders.', ephemeral: true });
+  // Post to order log channel
+  if (settings.orderChannelId) {
+    const logChannel = interaction.guild.channels.cache.get(settings.orderChannelId);
+    if (logChannel) await logChannel.send({ embeds: [completionEmbed] }).catch(() => {});
   }
 
-  // Parse customId: rbx_done:<userId>:<encodedUsername>:<robuxAmt>:<zpCost>:<timestamp>
-  const parts          = interaction.customId.split(':');
-  const buyerId        = parts[1];
-  const robloxUsername = decodeURIComponent(parts[2] ?? '');
-  const robuxAmount    = parts[3] ?? '?';
-  const zpCost         = parts[4] ?? '?';
-  const submittedAt    = parts[5] ? parseInt(parts[5], 10) : null;
+  // Log to spent leaderboard
+  logPurchase(guildId, {
+    userId:    buyerId,
+    username:  robloxUsername,
+    item:      `${robuxAmount.toLocaleString()} Robux (buy robux)`,
+    amount:    robuxAmount,
+    totalCost: zpCost,
+    timestamp: new Date().toISOString(),
+  });
 
-  const settings    = getGuildSettings(interaction.guildId);
-  const orderChanId = settings.orderChannelId;
+  // Update order count + bot status
+  settings.orderCount = (settings.orderCount || 0) + 1;
+  saveGuildSettings(guildId, settings);
+  const allSettings = getSettings();
+  let totalOrders = 0;
+  for (const gid of Object.keys(allSettings)) totalOrders += (allSettings[gid].orderCount || 0);
+  interaction.client.user.setActivity(`${totalOrders} orders completed`, { type: 3 });
 
-  // Post to order channel if configured
-  if (orderChanId) {
-    const orderChannel = interaction.guild.channels.cache.get(orderChanId);
-    if (orderChannel) {
-      const orderId    = generateOrderId(settings.orderIdPrefix || 'ORDER');
-      const now        = Math.floor(Date.now() / 1000);
-      const orderColor = settings.orderColor ?? 0x010101;
+  // Remove pending order
+  removePendingOrder(buyerId);
 
-      const orderLines =
-        `• Handler : Robux Buy\n` +
-        `• Buyer : <@${buyerId}>\n` +
-        `• Roblox User : \`${robloxUsername}\`\n` +
-        `• Robux : ${parseInt(robuxAmount).toLocaleString()} Robux\n` +
-        `• ZP Paid : ${parseInt(zpCost).toLocaleString()} ZP\n` +
-        `• Completed by : <@${interaction.user.id}>\n` +
-        `• Order id : ${orderId}\n` +
-        `• Time : <t:${now}:R>`;
+  // Buyer notification embed
+  const buyerEmbed = new EmbedBuilder()
+    .setTitle('✅ Your Robux Order Has Been Confirmed!')
+    .setDescription(
+      `Your order has been completed.\n\n` +
+      `> 🎮 **Roblox Username:** \`${robloxUsername}\`\n` +
+      `> 💫 **Robux Amount:** ${robuxAmount.toLocaleString()} Robux\n` +
+      `> 🆔 **Order ID:** \`${orderId}\``
+    )
+    .setColor(0x2ecc71)
+    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+    .setTimestamp();
 
-      const orderEmbed = new EmbedBuilder()
-        .setTitle(settings.orderTitle || '▶ Order Details:')
-        .setDescription(orderLines)
-        .setColor(orderColor)
-        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-        .setTimestamp();
-
-      await orderChannel.send({ embeds: [orderEmbed] }).catch(() => {});
-
-      // Log to spent leaderboard
-      logPurchase(interaction.guildId, {
-        userId:    buyerId,
-        username:  robloxUsername,
-        item:      `${parseInt(robuxAmount).toLocaleString()} Robux (rbxacc)`,
-        amount:    parseInt(robuxAmount) || 0,
-        totalCost: parseInt(zpCost) || 0,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Update order count + bot status
-      settings.orderCount = (settings.orderCount || 0) + 1;
-      saveGuildSettings(interaction.guildId, settings);
-      const allSettings = getSettings();
-      let totalOrders = 0;
-      for (const gid of Object.keys(allSettings)) totalOrders += (allSettings[gid].orderCount || 0);
-      interaction.client.user.setActivity(`${totalOrders} orders completed`, { type: 3 });
+  if (sourceType === 'ticket') {
+    const ticketChannel = interaction.guild.channels.cache.get(sourceChannelId);
+    if (ticketChannel) {
+      await ticketChannel.send({ content: `<@${buyerId}>`, embeds: [buyerEmbed] }).catch(() => {});
     }
+  } else {
+    try {
+      const buyer = await interaction.client.users.fetch(buyerId);
+      await buyer.send({ embeds: [buyerEmbed] });
+    } catch {}
   }
 
-  // Disable the Done Order button on the original message
+  // Disable confirm button — PRESERVE EMBEDS to prevent the "message deleted" visual
   const disabledRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId('rbx_done_disabled')
-      .setLabel('Order Completed')
+      .setCustomId('rbx_confirm_disabled')
+      .setLabel('Order Confirmed')
       .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(true)
   );
-
-  await interaction.update({ components: [disabledRow] });
+  await interaction.update({ embeds: interaction.message.embeds, components: [disabledRow] });
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// !igg  —  In-Game Gifting System  (1 Robux = 0.75 ZP)
-// ════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+//  !igg  —  In-Game Gifting System  (1 Robux = 0.75 ZP)
+// ═══════════════════════════════════════════════════════════════════════════
 
-const ZP_PER_ROBUX_IGG = 0.75;
-
-// ── !igg — admin sends the In-Game Gifting embed ─────────────────────────────
 async function handleIggCommand(message) {
   if (!message.member || !message.member.permissions.has(PermissionFlagsBits.Administrator)) {
     return message.reply({ content: '❌ You need **Administrator** permission to use this command.' });
@@ -272,7 +385,6 @@ async function handleIggCommand(message) {
   await message.delete().catch(() => {});
 }
 
-// ── "Order Gifting" button — open modal ──────────────────────────────────────
 async function handleIggBuyButton(interaction) {
   const modal = new ModalBuilder()
     .setCustomId('igg_order_modal')
@@ -329,7 +441,6 @@ async function handleIggBuyButton(interaction) {
   await interaction.showModal(modal);
 }
 
-// ── IGG modal submitted ───────────────────────────────────────────────────────
 async function handleIggOrderModal(interaction) {
   const robloxUsername = interaction.fields.getTextInputValue('roblox_username').trim();
   const gamepassRaw    = interaction.fields.getTextInputValue('gamepass_price').trim();
@@ -337,101 +448,106 @@ async function handleIggOrderModal(interaction) {
   const giftingType    = interaction.fields.getTextInputValue('gifting_type').trim();
   const gamepassName   = interaction.fields.getTextInputValue('gamepass_name').trim();
 
-  // Parse gamepass price — allow "400 robux", "400 R$", plain "400"
-  const priceMatch = gamepassRaw.match(/(\d+(?:\.\d+)?)/);
-  if (!priceMatch) {
-    return interaction.reply({ content: '❌ Invalid gamepass price. Please enter a number (e.g. `400`).', ephemeral: true });
-  }
-  const gamepassPrice = Math.round(parseFloat(priceMatch[1]));
-  if (gamepassPrice <= 0) {
-    return interaction.reply({ content: '❌ Gamepass price must be greater than 0.', ephemeral: true });
+  const gamepassPrice = parseInt(gamepassRaw, 10);
+  if (isNaN(gamepassPrice) || gamepassPrice <= 0) {
+    return interaction.reply({
+      content: '❌ Please enter a valid Gamepass price (whole number greater than 0).',
+      ephemeral: true,
+    });
   }
 
-  const zpCost     = Math.ceil(gamepassPrice * ZP_PER_ROBUX_IGG);
-  const userId     = interaction.user.id;
-  const balance    = getBalance(userId);
+  const zpCost  = Math.ceil(gamepassPrice * ZP_PER_ROBUX_IGG);
+  const userId  = interaction.user.id;
+  const balance = getBalance(userId);
 
   if (balance < zpCost) {
     const needed = zpCost - balance;
-    const embed  = new EmbedBuilder()
-      .setTitle('❌ Insufficient Zenix Points')
-      .setColor(0xe74c3c)
-      .addFields(
-        { name: '🎁 Gamepass Price', value: `**${gamepassPrice.toLocaleString()} Robux**`, inline: true },
-        { name: '💲 ZP Cost',        value: `**${zpCost.toLocaleString()} ZP**`,           inline: true },
-        { name: '💎 Your Balance',   value: `**${balance.toLocaleString()} ZP**`,          inline: true },
-        { name: '⚠️ Still Needed',  value: `**${needed.toLocaleString()} ZP**`,            inline: true },
-      )
-      .setFooter({ text: 'Powered by Zenix Realm' })
-      .setTimestamp();
-    return interaction.reply({ embeds: [embed], ephemeral: true });
+    return interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('❌ Insufficient Zenix Points')
+          .setColor(0xe74c3c)
+          .addFields(
+            { name: '🎁 Gamepass Price',  value: `**${gamepassPrice.toLocaleString()} Robux**`, inline: true },
+            { name: '💲 ZP Cost',         value: `**${zpCost.toLocaleString()} ZP**`,           inline: true },
+            { name: '💎 Your Balance',    value: `**${balance.toLocaleString()} ZP**`,          inline: true },
+            { name: '⚠️ Still Needed',   value: `**${needed.toLocaleString()} ZP**`,            inline: true },
+          )
+          .setFooter({ text: 'Powered by Zenix Realm' })
+          .setTimestamp(),
+      ],
+      ephemeral: true,
+    });
   }
 
   const newBalance = removeBalance(userId, zpCost);
   const timestamp  = Math.floor(Date.now() / 1000);
 
-  // Ephemeral confirmation
-  const confirmEmbed = new EmbedBuilder()
-    .setTitle('✅ Order Placed!')
-    .setDescription(
-      `**${zpCost.toLocaleString()} ZP** has been deducted from your balance.\n` +
-      `💎 **Remaining Balance:** ${newBalance.toLocaleString()} ZP`
-    )
-    .setColor(0x2ecc71)
-    .setTimestamp();
-  await interaction.reply({ embeds: [confirmEmbed], ephemeral: true });
+  const doneId = `igg_done:${userId}`;
 
-  // Public order embed — data is stored in the embed fields so the Done button
-  // can read them back without hitting the 100-char customId limit.
-  const orderEmbed = new EmbedBuilder()
-    .setTitle('🎁 In-Game Gifting Order Placed Successfully')
-    .setDescription(
-      `Your In-Game Gifting Order is Placed Successfully.\n` +
-      `Wait for an admin or owner to Complete Your Order.\n` +
-      `Thanks.\n\n` +
-      `━━━━━━━━━━━━━━━━━━━━━━`
-    )
-    .setColor(0x000000)
-    .addFields(
-      { name: '👤 Buyer',             value: `<@${userId}>`,                               inline: true },
-      { name: '🎮 Roblox Username',   value: `\`${robloxUsername}\``,                      inline: true },
-      { name: '🎁 Gamepass Price',    value: `**${gamepassPrice.toLocaleString()} Robux**`, inline: true },
-      { name: '🕹️ Game Name',        value: `\`${gameName}\``,                             inline: true },
-      { name: '🎟️ Gamepass Name',    value: `\`${gamepassName}\``,                         inline: true },
-      { name: '🌐 Gifting Type',      value: `\`${giftingType}\``,                         inline: true },
-      { name: '💎 ZP Paid',           value: `**${zpCost.toLocaleString()} ZP**`,          inline: true },
-    )
-    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-    .setTimestamp();
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('✅ Order Placed!')
+        .setDescription(
+          `**${zpCost.toLocaleString()} ZP** has been deducted from your balance.\n` +
+          `💎 **Remaining Balance:** ${newBalance.toLocaleString()} ZP`
+        )
+        .setColor(0x2ecc71)
+        .setTimestamp(),
+    ],
+    ephemeral: true,
+  });
 
-  // customId only carries userId + timestamp (game name can be long)
-  const doneRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`igg_done:${userId}:${timestamp}`)
-      .setLabel('Done Order')
-      .setEmoji('✅')
-      .setStyle(ButtonStyle.Success)
-  );
-
-  await interaction.channel.send({ embeds: [orderEmbed], components: [doneRow] });
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle('🎁 In-Game Gifting Order Placed')
+        .setDescription(
+          `Your IGG order has been placed. Wait for an admin to complete it.\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━`
+        )
+        .setColor(0x000000)
+        .addFields(
+          { name: '👤 Buyer',            value: `<@${userId}>`,                                    inline: true },
+          { name: '🎮 Roblox Username',  value: `\`${robloxUsername}\``,                           inline: true },
+          { name: '💲 Gamepass Price',   value: `**${gamepassPrice.toLocaleString()} Robux**`,     inline: true },
+          { name: '🎮 Game Name',        value: `\`${gameName}\``,                                 inline: true },
+          { name: '🎫 Gamepass Name',    value: `\`${gamepassName}\``,                             inline: true },
+          { name: '🌐 Gifting Type',     value: `\`${giftingType}\``,                              inline: true },
+          { name: '💎 ZP Paid',          value: `**${zpCost.toLocaleString()} ZP**`,               inline: true },
+        )
+        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(doneId)
+          .setLabel('Done Order')
+          .setEmoji('✅')
+          .setStyle(ButtonStyle.Success)
+      ),
+    ],
+  });
 }
 
-// ── "Done Order" (IGG) — read fields from embed, post to order channel ────────
 async function handleIggDone(interaction) {
-  if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
-      interaction.member.id !== interaction.guild.ownerId) {
+  if (
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
+    interaction.member.id !== interaction.guild.ownerId
+  ) {
     return interaction.reply({ content: '❌ Only administrators can complete orders.', ephemeral: true });
   }
 
-  const parts    = interaction.customId.split(':');
-  const buyerId  = parts[1];
+  const buyerId = interaction.customId.split(':')[1];
 
-  // Read order details from the embed fields on the message
+  // Read order details from embed fields
   const embed  = interaction.message.embeds[0];
   const field  = name => embed?.fields?.find(f => f.name.includes(name))?.value ?? '?';
 
   const robloxUsername = field('Roblox Username').replace(/`/g, '');
-  const gamepassPrice  = field('Gamepass Price').replace(/\*\*/g, '');
+  const gamepassPrice  = field('Gamepass Price').replace(/\*\*/g, '').replace(' Robux', '').trim();
   const gameName       = field('Game Name').replace(/`/g, '');
   const gamepassName   = field('Gamepass Name').replace(/`/g, '');
   const giftingType    = field('Gifting Type').replace(/`/g, '');
@@ -451,7 +567,7 @@ async function handleIggDone(interaction) {
         `• Handler : In-Game Gifting\n` +
         `• Buyer : <@${buyerId}>\n` +
         `• Roblox User : \`${robloxUsername}\`\n` +
-        `• Gamepass Price : ${gamepassPrice}\n` +
+        `• Gamepass Price : ${gamepassPrice} Robux\n` +
         `• Game : \`${gameName}\`\n` +
         `• Gamepass : \`${gamepassName}\`\n` +
         `• Gifting Type : \`${giftingType}\`\n` +
@@ -460,17 +576,19 @@ async function handleIggDone(interaction) {
         `• Order id : ${orderId}\n` +
         `• Time : <t:${now}:R>`;
 
-      const orderEmbed = new EmbedBuilder()
-        .setTitle(settings.orderTitle || '▶ Order Details:')
-        .setDescription(orderLines)
-        .setColor(orderColor)
-        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-        .setTimestamp();
-
-      await orderChannel.send({ embeds: [orderEmbed] }).catch(() => {});
+      await orderChannel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle(settings.orderTitle || '▶ Order Details:')
+            .setDescription(orderLines)
+            .setColor(orderColor)
+            .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+            .setTimestamp(),
+        ],
+      }).catch(() => {});
 
       // Log to spent leaderboard
-      const zpPaidNum = parseInt(zpPaid.replace(/[^0-9.]/g, ''), 10) || 0;
+      const zpPaidNum = parseInt(zpPaid.replace(/[^0-9]/g, ''), 10) || 0;
       logPurchase(interaction.guildId, {
         userId:    buyerId,
         username:  robloxUsername,
@@ -489,6 +607,7 @@ async function handleIggDone(interaction) {
     }
   }
 
+  // Disable Done button — PRESERVE EMBEDS to prevent message appearing deleted
   const disabledRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('igg_done_disabled')
@@ -498,7 +617,16 @@ async function handleIggDone(interaction) {
       .setDisabled(true)
   );
 
-  await interaction.update({ components: [disabledRow] });
+  await interaction.update({ embeds: interaction.message.embeds, components: [disabledRow] });
 }
 
-module.exports = { handleRbxAccCommand, handleRbxBuyButton, handleRbxOrderModal, handleRbxDone, handleIggCommand, handleIggBuyButton, handleIggOrderModal, handleIggDone };
+module.exports = {
+  handleBuyRobuxCommand,
+  handleBuyRobuxButton,
+  handleBuyRobuxModal,
+  handleRbxConfirm,
+  handleIggCommand,
+  handleIggBuyButton,
+  handleIggOrderModal,
+  handleIggDone,
+};

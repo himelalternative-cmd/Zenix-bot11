@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { handlePayButton, handleTrxModal, handlePayConfirm, handlePayConfirmModal, handlePayReject, handleRejectModal } = require('./payHandler');
-const { handleRbxBuyButton, handleRbxOrderModal, handleRbxDone, handleIggBuyButton, handleIggOrderModal, handleIggDone } = require('./rbxHandler');
+const { handleBuyRobuxButton, handleBuyRobuxModal, handleRbxConfirm, handleIggBuyButton, handleIggOrderModal, handleIggDone } = require('./rbxHandler');
 const { handleDmMessageModal } = require('../commands/setup');
 const { handleVerifyButton, handleVerifyCaptcha } = require('./verifyHandler');
 const {
@@ -91,8 +91,8 @@ async function handleInteraction(client, interaction) {
   if (interaction.isButton()) {
     const id = interaction.customId;
     if (id === 'verify_btn')            return handleVerifyButton(interaction);
-    if (id === 'rbx_buy_btn')           return handleRbxBuyButton(interaction);
-    if (id.startsWith('rbx_done:'))     return handleRbxDone(interaction);
+    if (id === 'rbx_buy_btn')           return handleBuyRobuxButton(interaction);
+    if (id.startsWith('rbx_confirm:')) return handleRbxConfirm(interaction);
     if (id === 'igg_buy_btn')           return handleIggBuyButton(interaction);
     if (id.startsWith('igg_done:'))     return handleIggDone(interaction);
     if (id.startsWith('pay_submit_btn')) return handlePayButton(interaction);
@@ -111,7 +111,7 @@ async function handleInteraction(client, interaction) {
   // ── Modals ──────────────────────────────────────────────────────────────────
   if (interaction.isModalSubmit()) {
     if (interaction.customId === 'verify_captcha_modal')      return handleVerifyCaptcha(interaction);
-    if (interaction.customId === 'rbx_order_modal')           return handleRbxOrderModal(interaction);
+    if (interaction.customId === 'rbx_order_modal')           return handleBuyRobuxModal(interaction);
     if (interaction.customId === 'igg_order_modal')           return handleIggOrderModal(interaction);
     if (interaction.customId.startsWith('pay_trx_modal'))     return handleTrxModal(interaction);
     if (interaction.customId.startsWith('pay_confirm_modal')) return handlePayConfirmModal(interaction);
