@@ -3,11 +3,41 @@ const { handlePayCommand } = require('./payHandler');
 const { handleRbxAccCommand, handleIggCommand } = require('./rbxHandler');
 const { getOwnerByChannel, removeTicket } = require('../utils/tickets');
 const { isTicketDone } = require('./ticketHandler');
+const { getPromo, setPromo } = require('../utils/promoSettings');
 
 const CONVERSION_RATE = 0.9; // 1 Robux = 0.9 BDT
 
 async function handlePrefix(message) {
   const content = message.content.trim();
+
+  // !promo set <text> — save a promo message for this guild (admin only)
+  // !promo           — post the saved promo message
+  if (/^!promo(\s|$)/i.test(content)) {
+    const setMatch = content.match(/^!promo\s+set\s+([\s\S]+)/i);
+
+    if (setMatch) {
+      // Only admins can set the promo
+      if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+        return message.reply({ content: '❌ Only administrators can set the promo message.' });
+      }
+      const text = setMatch[1].trim();
+      setPromo(message.guild.id, text);
+      const embed = new EmbedBuilder()
+        .setTitle('✅ Promo Message Saved')
+        .setDescription(`Your promo message has been set:\n\n${text}`)
+        .setColor(0x2ecc71)
+        .setFooter({ text: 'Use !promo to post it anytime.' })
+        .setTimestamp();
+      return message.reply({ embeds: [embed] });
+    }
+
+    // !promo — post the saved promo
+    const promoText = getPromo(message.guild.id);
+    if (!promoText) {
+      return message.reply({ content: '❌ No promo message set yet. Use `!promo set <text>` to set one.' });
+    }
+    return message.channel.send(promoText);
+  }
 
   // !close — close the current ticket channel (admin only)
   if (/^!close$/i.test(content)) {
