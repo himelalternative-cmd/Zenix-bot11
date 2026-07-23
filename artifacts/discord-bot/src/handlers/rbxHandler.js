@@ -10,6 +10,7 @@ const {
 } = require('discord.js');
 const { getBalance, removeBalance } = require('../utils/zenixPoints');
 const { getGuildSettings, saveGuildSettings, getSettings, generateOrderId } = require('../utils/settings');
+const { logPurchase } = require('../utils/stockHistory');
 
 const ZP_PER_ROBUX = 0.9; // 1 Robux = 0.9 ZP
 
@@ -202,6 +203,16 @@ async function handleRbxDone(interaction) {
         .setTimestamp();
 
       await orderChannel.send({ embeds: [orderEmbed] }).catch(() => {});
+
+      // Log to spent leaderboard
+      logPurchase(interaction.guildId, {
+        userId:    buyerId,
+        username:  robloxUsername,
+        item:      `${parseInt(robuxAmount).toLocaleString()} Robux (rbxacc)`,
+        amount:    parseInt(robuxAmount) || 0,
+        totalCost: parseInt(zpCost) || 0,
+        timestamp: new Date().toISOString(),
+      });
 
       // Update order count + bot status
       settings.orderCount = (settings.orderCount || 0) + 1;
@@ -457,6 +468,17 @@ async function handleIggDone(interaction) {
         .setTimestamp();
 
       await orderChannel.send({ embeds: [orderEmbed] }).catch(() => {});
+
+      // Log to spent leaderboard
+      const zpPaidNum = parseInt(zpPaid.replace(/[^0-9.]/g, ''), 10) || 0;
+      logPurchase(interaction.guildId, {
+        userId:    buyerId,
+        username:  robloxUsername,
+        item:      `${gamepassName} in ${gameName} (igg)`,
+        amount:    parseInt(gamepassPrice) || 0,
+        totalCost: zpPaidNum,
+        timestamp: new Date().toISOString(),
+      });
 
       settings.orderCount = (settings.orderCount || 0) + 1;
       saveGuildSettings(interaction.guildId, settings);
