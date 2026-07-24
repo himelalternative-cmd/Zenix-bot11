@@ -11,7 +11,6 @@ const {
 const { getBalance, removeBalance } = require('../utils/zenixPoints');
 const { getGuildSettings, saveGuildSettings, getSettings, generateOrderId } = require('../utils/settings');
 const { logPurchase } = require('../utils/stockHistory');
-const { getPendingOrder, setPendingOrder, removePendingOrder } = require('../utils/pendingOrders');
 const { getOwnerByChannel } = require('../utils/tickets');
 
 const ZP_PER_ROBUX     = 0.9;   // !buy robux: 1 Robux = 0.9 ZP
@@ -42,8 +41,7 @@ async function handleBuyRobuxCommand(message) {
     .setTitle('🎮 Robux Purchase')
     .setDescription(
       'Click the button below to fill the order form.\n\n' +
-      '> 💎 **Rate:** 1 Robux = **0.9 ZP**\n\n' +
-      '_You may only have one pending order at a time._'
+      '> 💎 **Rate:** 1 Robux = **0.9 ZP**'
     )
     .setColor(0x000000)
     .setFooter({ text: message.guild.name, iconURL: message.guild.iconURL() ?? undefined })
@@ -61,18 +59,8 @@ async function handleBuyRobuxCommand(message) {
   await message.delete().catch(() => {});
 }
 
-// ── Button clicked → check duplicate → show modal ───────────────────────────
+// ── Button clicked → show modal ─────────────────────────────────────────────
 async function handleBuyRobuxButton(interaction) {
-  const existing = getPendingOrder(interaction.user.id);
-  if (existing) {
-    return interaction.reply({
-      content:
-        '❌ You already have a **pending Robux order**. ' +
-        'Please wait for it to be confirmed by an admin before submitting a new one.',
-      ephemeral: true,
-    });
-  }
-
   const modal = new ModalBuilder()
     .setCustomId('rbx_order_modal')
     .setTitle('Robux Order Form');
@@ -101,7 +89,7 @@ async function handleBuyRobuxButton(interaction) {
   await interaction.showModal(modal);
 }
 
-// ── Modal submitted → validate → deduct ZP → post to pending channel ─────────
+// ── Modal submitted → validate → deduct ZP → post order embed with Done button ──
 async function handleBuyRobuxModal(interaction) {
   const robloxUsername = interaction.fields.getTextInputValue('roblox_username').trim();
   const robuxRaw       = interaction.fields.getTextInputValue('robux_amount').trim();
@@ -117,14 +105,6 @@ async function handleBuyRobuxModal(interaction) {
   const zpCost  = Math.ceil(robuxAmount * ZP_PER_ROBUX);
   const userId  = interaction.user.id;
   const balance = getBalance(userId);
-
-  // Double-check duplicate (race-condition guard)
-  if (getPendingOrder(userId)) {
-    return interaction.reply({
-      content: '❌ You already have a pending Robux order. Please wait for it to be confirmed.',
-      ephemeral: true,
-    });
-  }
 
   if (balance < zpCost) {
     const needed = zpCost - balance;
@@ -148,34 +128,16 @@ async function handleBuyRobuxModal(interaction) {
 
   // Deduct ZP
   const newBalance = removeBalance(userId, zpCost);
-
-  // Determine source (ticket vs bot-cmd)
-  const isTicket        = !!getOwnerByChannel(interaction.channelId);
-  const sourceType      = isTicket ? 'ticket' : 'botcmd';
-  const sourceChannelId = interaction.channelId;
-  const timestamp       = Math.floor(Date.now() / 1000);
-
-  // Save pending order
-  setPendingOrder(userId, {
-    userId,
-    guildId: interaction.guildId,
-    robloxUsername,
-    robuxAmount,
-    zpCost,
-    sourceChannelId,
-    sourceType,
-    timestamp,
-  });
+  const doneId     = `rbx_done:${userId}`;
 
   // Ephemeral confirmation
   await interaction.reply({
     embeds: [
       new EmbedBuilder()
-        .setTitle('✅ Order Submitted!')
+        .setTitle('✅ Order Placed!')
         .setDescription(
           `**${zpCost.toLocaleString()} ZP** has been deducted from your balance.\n` +
-          `💎 **Remaining Balance:** ${newBalance.toLocaleString()} ZP\n\n` +
-          `An admin will confirm your order shortly.`
+          `💎 **Remaining Balance:** ${newBalance.toLocaleString()} ZP`
         )
         .setColor(0x2ecc71)
         .setTimestamp(),
@@ -183,13 +145,16 @@ async function handleBuyRobuxModal(interaction) {
     ephemeral: true,
   });
 
-  // Info embed in the source channel (no confirm button — view only)
+  // Order embed with Done Order button for admin
   await interaction.channel.send({
     embeds: [
       new EmbedBuilder()
-        .setTitle('🎮 Robux Order Submitted — Awaiting Confirmation')
-        .setDescription('An admin will review and confirm this order shortly.')
-        .setColor(0xf39c12)
+        .setTitle('🎮 Robux Order Placed')
+        .setDescription(
+          `Your order has been placed. Wait for an admin to complete it.\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━`
+        )
+        .setColor(0x000000)
         .addFields(
           { name: '👤 Buyer',           value: `<@${userId}>`,                              inline: true },
           { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                     inline: true },
@@ -199,42 +164,11 @@ async function handleBuyRobuxModal(interaction) {
         .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
         .setTimestamp(),
     ],
-  });
-
-  // Post to private pending channel with Confirm button
-  const settings      = getGuildSettings(interaction.guildId);
-  const pendingChanId = settings.pendingChannelId;
-  if (!pendingChanId) return;
-
-  const pendingChannel = interaction.guild.channels.cache.get(pendingChanId);
-  if (!pendingChannel) return;
-
-  const sourceLabel = sourceType === 'ticket'
-    ? `<#${sourceChannelId}> (Ticket)`
-    : `<#${sourceChannelId}> (Bot CMD)`;
-
-  await pendingChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle('📋 Pending Robux Order')
-        .setDescription('A new Robux order is waiting for confirmation.')
-        .setColor(0xe67e22)
-        .addFields(
-          { name: '👤 Buyer',           value: `<@${userId}>`,                              inline: true },
-          { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                     inline: true },
-          { name: '💫 Robux Amount',    value: `**${robuxAmount.toLocaleString()} Robux**`, inline: true },
-          { name: '💎 ZP Paid',         value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
-          { name: '📍 Source',          value: sourceLabel,                                  inline: true },
-          { name: '⏰ Submitted',       value: `<t:${timestamp}:R>`,                        inline: true },
-        )
-        .setFooter({ text: 'Only admins can confirm orders here.' })
-        .setTimestamp(),
-    ],
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`rbx_confirm:${userId}`)
-          .setLabel('Confirm Order')
+          .setCustomId(doneId)
+          .setLabel('Done Order')
           .setEmoji('✅')
           .setStyle(ButtonStyle.Success)
       ),
@@ -242,34 +176,31 @@ async function handleBuyRobuxModal(interaction) {
   });
 }
 
-// ── Admin confirms order from the pending channel ────────────────────────────
-async function handleRbxConfirm(interaction) {
+// ── Admin clicks Done Order ───────────────────────────────────────────────────
+async function handleRbxDone(interaction) {
   if (
     !interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
     interaction.member.id !== interaction.guild.ownerId
   ) {
-    return interaction.reply({ content: '❌ Only administrators can confirm orders.', ephemeral: true });
+    return interaction.reply({ content: '❌ Only administrators can complete orders.', ephemeral: true });
   }
 
   const buyerId = interaction.customId.split(':')[1];
-  const order   = getPendingOrder(buyerId);
 
-  if (!order) {
-    const disabledRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('rbx_confirm_disabled')
-        .setLabel('Already Processed')
-        .setEmoji('⚠️')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(true)
-    );
-    return interaction.update({ embeds: interaction.message.embeds, components: [disabledRow] });
-  }
+  // Read order details from embed fields
+  const embed = interaction.message.embeds[0];
+  const field = name => embed?.fields?.find(f => f.name.includes(name))?.value ?? '?';
 
-  const { guildId, robloxUsername, robuxAmount, zpCost, sourceChannelId, sourceType } = order;
-  const settings  = getGuildSettings(guildId);
-  const orderId   = generateOrderId(settings.orderIdPrefix || 'ORDER');
-  const now       = Math.floor(Date.now() / 1000);
+  const robloxUsername = field('Roblox Username').replace(/`/g, '');
+  const robuxAmountStr = field('Robux Amount').replace(/\*\*/g, '').replace(' Robux', '').replace(/,/g, '').trim();
+  const zpPaid         = field('ZP Paid').replace(/\*\*/g, '');
+
+  const robuxAmount = parseInt(robuxAmountStr, 10) || 0;
+  const zpPaidNum   = parseInt(zpPaid.replace(/[^0-9]/g, ''), 10) || 0;
+
+  const settings   = getGuildSettings(interaction.guildId);
+  const orderId    = generateOrderId(settings.orderIdPrefix || 'ORDER');
+  const now        = Math.floor(Date.now() / 1000);
   const orderColor = settings.orderColor ?? 0x010101;
 
   const orderLines =
@@ -277,75 +208,50 @@ async function handleRbxConfirm(interaction) {
     `• Buyer : <@${buyerId}>\n` +
     `• Roblox User : \`${robloxUsername}\`\n` +
     `• Robux : ${robuxAmount.toLocaleString()} Robux\n` +
-    `• ZP Paid : ${zpCost.toLocaleString()} ZP\n` +
+    `• ZP Paid : ${zpPaidNum.toLocaleString()} ZP\n` +
     `• Completed by : <@${interaction.user.id}>\n` +
     `• Order id : ${orderId}\n` +
     `• Time : <t:${now}:R>`;
 
-  const completionEmbed = new EmbedBuilder()
-    .setTitle(settings.orderTitle || '▶ Order Details:')
-    .setDescription(orderLines)
-    .setColor(orderColor)
-    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-    .setTimestamp();
-
-  // Post to order log channel
   if (settings.orderChannelId) {
     const logChannel = interaction.guild.channels.cache.get(settings.orderChannelId);
-    if (logChannel) await logChannel.send({ embeds: [completionEmbed] }).catch(() => {});
+    if (logChannel) {
+      await logChannel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle(settings.orderTitle || '▶ Order Details:')
+            .setDescription(orderLines)
+            .setColor(orderColor)
+            .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+            .setTimestamp(),
+        ],
+      }).catch(() => {});
+    }
   }
 
   // Log to spent leaderboard
-  logPurchase(guildId, {
+  logPurchase(interaction.guildId, {
     userId:    buyerId,
     username:  robloxUsername,
     item:      `${robuxAmount.toLocaleString()} Robux (buy robux)`,
     amount:    robuxAmount,
-    totalCost: zpCost,
+    totalCost: zpPaidNum,
     timestamp: new Date().toISOString(),
   });
 
   // Update order count + bot status
   settings.orderCount = (settings.orderCount || 0) + 1;
-  saveGuildSettings(guildId, settings);
+  saveGuildSettings(interaction.guildId, settings);
   const allSettings = getSettings();
   let totalOrders = 0;
   for (const gid of Object.keys(allSettings)) totalOrders += (allSettings[gid].orderCount || 0);
   interaction.client.user.setActivity(`${totalOrders} orders completed`, { type: 3 });
 
-  // Remove pending order
-  removePendingOrder(buyerId);
-
-  // Buyer notification embed
-  const buyerEmbed = new EmbedBuilder()
-    .setTitle('✅ Your Robux Order Has Been Confirmed!')
-    .setDescription(
-      `Your order has been completed.\n\n` +
-      `> 🎮 **Roblox Username:** \`${robloxUsername}\`\n` +
-      `> 💫 **Robux Amount:** ${robuxAmount.toLocaleString()} Robux\n` +
-      `> 🆔 **Order ID:** \`${orderId}\``
-    )
-    .setColor(0x2ecc71)
-    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-    .setTimestamp();
-
-  if (sourceType === 'ticket') {
-    const ticketChannel = interaction.guild.channels.cache.get(sourceChannelId);
-    if (ticketChannel) {
-      await ticketChannel.send({ content: `<@${buyerId}>`, embeds: [buyerEmbed] }).catch(() => {});
-    }
-  } else {
-    try {
-      const buyer = await interaction.client.users.fetch(buyerId);
-      await buyer.send({ embeds: [buyerEmbed] });
-    } catch {}
-  }
-
-  // Disable confirm button — PRESERVE EMBEDS to prevent the "message deleted" visual
+  // Disable Done button — preserve embed
   const disabledRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId('rbx_confirm_disabled')
-      .setLabel('Order Confirmed')
+      .setCustomId('rbx_done_disabled')
+      .setLabel('Order Completed')
       .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(true)
@@ -624,7 +530,7 @@ module.exports = {
   handleBuyRobuxCommand,
   handleBuyRobuxButton,
   handleBuyRobuxModal,
-  handleRbxConfirm,
+  handleRbxDone,
   handleIggCommand,
   handleIggBuyButton,
   handleIggOrderModal,

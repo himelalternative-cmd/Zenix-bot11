@@ -1,6 +1,6 @@
 const { EmbedBuilder } = require('discord.js');
 const { handlePayButton, handleTrxModal, handlePayConfirm, handlePayConfirmModal, handlePayReject, handleRejectModal } = require('./payHandler');
-const { handleBuyRobuxButton, handleBuyRobuxModal, handleRbxConfirm, handleIggBuyButton, handleIggOrderModal, handleIggDone } = require('./rbxHandler');
+const { handleBuyRobuxButton, handleBuyRobuxModal, handleRbxDone, handleIggBuyButton, handleIggOrderModal, handleIggDone } = require('./rbxHandler');
 const { handleDmMessageModal } = require('../commands/setup');
 const { handleVerifyButton, handleVerifyCaptcha } = require('./verifyHandler');
 const {
@@ -91,8 +91,8 @@ async function handleInteraction(client, interaction) {
   if (interaction.isButton()) {
     const id = interaction.customId;
     if (id === 'verify_btn')            return handleVerifyButton(interaction);
-    if (id === 'rbx_buy_btn')           return handleBuyRobuxButton(interaction);
-    if (id.startsWith('rbx_confirm:')) return handleRbxConfirm(interaction);
+    if (id === 'rbx_buy_btn')        return handleBuyRobuxButton(interaction);
+    if (id.startsWith('rbx_done:')) return handleRbxDone(interaction);
     if (id === 'igg_buy_btn')           return handleIggBuyButton(interaction);
     if (id.startsWith('igg_done:'))     return handleIggDone(interaction);
     if (id.startsWith('pay_submit_btn')) return handlePayButton(interaction);
