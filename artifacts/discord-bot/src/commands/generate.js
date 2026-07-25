@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { getGuildSettings } = require('../utils/settings');
 const { generateNetflix } = require('../utils/netflixGen');
 
 // ── Per-user cooldown (5 seconds) ─────────────────────────────────────────────
@@ -19,28 +18,6 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    const settings = getGuildSettings(interaction.guildId);
-
-    // ── Role check ────────────────────────────────────────────────────────────
-    const requiredRoleId = settings.generatorRoleId;
-    if (!requiredRoleId) {
-      return interaction.reply({
-        content:
-          '❌ The generator is not configured yet.\n' +
-          'An admin must run `/generator role set @role` first.',
-        ephemeral: true,
-      });
-    }
-
-    const hasRole = interaction.member.roles.cache.has(requiredRoleId);
-    if (!hasRole) {
-      const role = interaction.guild.roles.cache.get(requiredRoleId);
-      return interaction.reply({
-        content: `❌ You need the **${role?.name ?? 'required'}** role to use \`/generate\`.`,
-        ephemeral: true,
-      });
-    }
-
     // ── Cooldown check ────────────────────────────────────────────────────────
     const userId   = interaction.user.id;
     const lastUsed = cooldowns.get(userId) ?? 0;
