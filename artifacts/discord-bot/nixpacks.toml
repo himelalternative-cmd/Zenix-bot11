@@ -1,6 +1,7 @@
-# Nixpacks config — adds Chromium system libraries needed by Puppeteer on Railway
+# Nixpacks config — adds Node.js + Chromium system libraries needed by Puppeteer on Railway
 [phases.setup]
 nixPkgs = [
+  "nodejs_20",
   "glib",
   "nss",
   "nspr",
