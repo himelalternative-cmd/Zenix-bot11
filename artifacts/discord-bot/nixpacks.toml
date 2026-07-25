@@ -1,0 +1,25 @@
+# Nixpacks config — adds Chromium system libraries needed by Puppeteer on Railway
+[phases.setup]
+nixPkgs = [
+  "glib",
+  "nss",
+  "nspr",
+  "atk",
+  "at-spi2-atk",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXfixes",
+  "xorg.libXrandr",
+  "xorg.libxcb",
+  "libgbm",
+  "libxkbcommon",
+  "pango",
+  "cairo",
+  "cups",
+  "dbus",
+  "expat",
+  "alsa-lib",
+  "libuuid",
+]
