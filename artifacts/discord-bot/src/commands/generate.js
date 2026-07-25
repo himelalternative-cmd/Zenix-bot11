@@ -4,7 +4,7 @@ const { generateNetflix } = require('../utils/netflixGen');
 
 // ── Per-user cooldown (5 seconds) ─────────────────────────────────────────────
 const cooldowns = new Map(); // userId -> last-used timestamp (ms)
-const COOLDOWN_MS = 5_000;
+const COOLDOWN_MS = 90_000; // 1.5 minutes
 
 module.exports = {
   data: new SlashCommandBuilder()
