@@ -43,7 +43,6 @@ function getOrderChannel(guild, settings) {
 // ── Send the order embed with a button ──────────────────────────────────────
 async function handleBuyRobuxCommand(message) {
   const settings = getGuildSettings(message.guild.id);
-  const pendingChannel = getPendingChannel(message.guild, settings);
 
   const isTicket = !!getOwnerByChannel(message.channel.id);
   const isBotCmd = settings.botCmdChannelId === message.channel.id;
@@ -53,16 +52,6 @@ async function handleBuyRobuxCommand(message) {
       content:
         '❌ This command can only be used inside a **ticket** or the configured **bot commands channel**.\n' +
         '_Ask an admin to set one with `/set botcmd channel`._',
-    });
-    setTimeout(() => reply.delete().catch(() => {}), 8000);
-    return;
-  }
-
-  if (!pendingChannel) {
-    const reply = await message.reply({
-      content:
-        '❌ Pending orders channel is not configured or is unavailable.\n' +
-        'An administrator must run `/set pending channel` first.',
     });
     setTimeout(() => reply.delete().catch(() => {}), 8000);
     return;
@@ -86,7 +75,7 @@ async function handleBuyRobuxCommand(message) {
       .setStyle(ButtonStyle.Primary)
   );
 
-  await pendingChannel.send({ embeds: [embed], components: [row] });
+  await message.channel.send({ embeds: [embed], components: [row] });
   await message.delete().catch(() => {});
 }
 
@@ -120,7 +109,7 @@ async function handleBuyRobuxButton(interaction) {
   await interaction.showModal(modal);
 }
 
-// ── Modal submitted → validate → deduct ZP → post order embed with Done button ──
+// ── Modal submitted → validate → deduct ZP → show in source + pending channels ──
 async function handleBuyRobuxModal(interaction) {
   const settings = getGuildSettings(interaction.guildId);
   const pendingChannel = getPendingChannel(interaction.guild, settings);
@@ -187,25 +176,29 @@ async function handleBuyRobuxModal(interaction) {
     ephemeral: true,
   });
 
-  // Only the pending-orders channel receives the order and its completion button.
+  const orderEmbed = new EmbedBuilder()
+    .setTitle('🎮 Robux Order Placed')
+    .setDescription(
+      `Your order has been placed. Wait for an admin to complete it.\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━`
+    )
+    .setColor(0x000000)
+    .addFields(
+      { name: '👤 Buyer',           value: `<@${userId}>`,                              inline: true },
+      { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                     inline: true },
+      { name: '💫 Robux Amount',    value: `**${robuxAmount.toLocaleString()} Robux**`, inline: true },
+      { name: '💎 ZP Paid',         value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
+    )
+    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+    .setTimestamp();
+
+  // Show the filled form in the channel where the customer started it,
+  // without a completion button.
+  await interaction.channel.send({ embeds: [orderEmbed] });
+
+  // Staff process the only actionable copy in the pending-orders channel.
   await pendingChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle('🎮 Robux Order Placed')
-        .setDescription(
-          `Your order has been placed. Wait for an admin to complete it.\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━`
-        )
-        .setColor(0x000000)
-        .addFields(
-          { name: '👤 Buyer',           value: `<@${userId}>`,                              inline: true },
-          { name: '🎮 Roblox Username', value: `\`${robloxUsername}\``,                     inline: true },
-          { name: '💫 Robux Amount',    value: `**${robuxAmount.toLocaleString()} Robux**`, inline: true },
-          { name: '💎 ZP Paid',         value: `**${zpCost.toLocaleString()} ZP**`,         inline: true },
-        )
-        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-        .setTimestamp(),
-    ],
+    embeds: [orderEmbed],
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -328,18 +321,6 @@ async function handleIggCommand(message) {
     return message.reply({ content: '❌ You need **Administrator** permission to use this command.' });
   }
 
-  const settings = getGuildSettings(message.guild.id);
-  const pendingChannel = getPendingChannel(message.guild, settings);
-  if (!pendingChannel) {
-    const reply = await message.reply({
-      content:
-        '❌ Pending orders channel is not configured or is unavailable.\n' +
-        'An administrator must run `/set pending channel` first.',
-    });
-    setTimeout(() => reply.delete().catch(() => {}), 8000);
-    return;
-  }
-
   const embed = new EmbedBuilder()
     .setTitle('🎁 In-Game Gifting')
     .setDescription(
@@ -359,7 +340,7 @@ async function handleIggCommand(message) {
       .setStyle(ButtonStyle.Primary)
   );
 
-  await pendingChannel.send({ embeds: [embed], components: [row] });
+  await message.channel.send({ embeds: [embed], components: [row] });
   await message.delete().catch(() => {});
 }
 
@@ -488,28 +469,32 @@ async function handleIggOrderModal(interaction) {
     ephemeral: true,
   });
 
-  // Only the pending-orders channel receives the order and its completion button.
+  const orderEmbed = new EmbedBuilder()
+    .setTitle('🎁 In-Game Gifting Order Placed')
+    .setDescription(
+      `Your IGG order has been placed. Wait for an admin to complete it.\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━`
+    )
+    .setColor(0x000000)
+    .addFields(
+      { name: '👤 Buyer',            value: `<@${userId}>`,                                    inline: true },
+      { name: '🎮 Roblox Username',  value: `\`${robloxUsername}\``,                           inline: true },
+      { name: '💲 Gamepass Price',   value: `**${gamepassPrice.toLocaleString()} Robux**`,     inline: true },
+      { name: '🎮 Game Name',        value: `\`${gameName}\``,                                 inline: true },
+      { name: '🎫 Gamepass Name',    value: `\`${gamepassName}\``,                             inline: true },
+      { name: '🌐 Gifting Type',     value: `\`${giftingType}\``,                              inline: true },
+      { name: '💎 ZP Paid',          value: `**${zpCost.toLocaleString()} ZP**`,               inline: true },
+    )
+    .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+    .setTimestamp();
+
+  // Show the filled form in the channel where the customer started it,
+  // without a completion button.
+  await interaction.channel.send({ embeds: [orderEmbed] });
+
+  // Staff process the only actionable copy in the pending-orders channel.
   await pendingChannel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle('🎁 In-Game Gifting Order Placed')
-        .setDescription(
-          `Your IGG order has been placed. Wait for an admin to complete it.\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━`
-        )
-        .setColor(0x000000)
-        .addFields(
-          { name: '👤 Buyer',            value: `<@${userId}>`,                                    inline: true },
-          { name: '🎮 Roblox Username',  value: `\`${robloxUsername}\``,                           inline: true },
-          { name: '💲 Gamepass Price',   value: `**${gamepassPrice.toLocaleString()} Robux**`,     inline: true },
-          { name: '🎮 Game Name',        value: `\`${gameName}\``,                                 inline: true },
-          { name: '🎫 Gamepass Name',    value: `\`${gamepassName}\``,                             inline: true },
-          { name: '🌐 Gifting Type',     value: `\`${giftingType}\``,                              inline: true },
-          { name: '💎 ZP Paid',          value: `**${zpCost.toLocaleString()} ZP**`,               inline: true },
-        )
-        .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-        .setTimestamp(),
-    ],
+    embeds: [orderEmbed],
     components: [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
