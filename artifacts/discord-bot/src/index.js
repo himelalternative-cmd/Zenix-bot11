@@ -117,6 +117,12 @@ client.on('interactionCreate', async interaction => {
     await handleInteraction(client, interaction);
   } catch (err) {
     console.error('interactionCreate error:', err.message);
+    if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: '❌ Something went wrong while processing that action. Please try again.',
+        ephemeral: true,
+      }).catch(() => {});
+    }
   }
 });
 

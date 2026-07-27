@@ -81,32 +81,42 @@ async function handleBuyRobuxCommand(message) {
 
 // ── Button clicked → show modal ─────────────────────────────────────────────
 async function handleBuyRobuxButton(interaction) {
-  const modal = new ModalBuilder()
-    .setCustomId('rbx_order_modal')
-    .setTitle('Robux Order Form');
+  try {
+    const modal = new ModalBuilder()
+      .setCustomId('rbx_order_modal')
+      .setTitle('Robux Order Form');
 
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('roblox_username')
-        .setLabel('Roblox Username')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Enter your Roblox username')
-        .setRequired(true)
-        .setMaxLength(20)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('robux_amount')
-        .setLabel('How much Robux do you want to buy?')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 100')
-        .setRequired(true)
-        .setMaxLength(8)
-    ),
-  );
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('roblox_username')
+          .setLabel('Roblox Username')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Enter your Roblox username')
+          .setRequired(true)
+          .setMaxLength(20)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('robux_amount')
+          .setLabel('How much Robux do you want to buy?')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. 100')
+          .setRequired(true)
+          .setMaxLength(8)
+      ),
+    );
 
-  await interaction.showModal(modal);
+    await interaction.showModal(modal);
+  } catch (err) {
+    console.error('[rbx] Failed to open order form:', err.message);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: '❌ I could not open the order form. Please try the button again.',
+        ephemeral: true,
+      }).catch(() => {});
+    }
+  }
 }
 
 // ── Modal submitted → validate → deduct ZP → show in source + pending channels ──
@@ -345,59 +355,69 @@ async function handleIggCommand(message) {
 }
 
 async function handleIggBuyButton(interaction) {
-  const modal = new ModalBuilder()
-    .setCustomId('igg_order_modal')
-    .setTitle('In-Game Gifting Order');
+  try {
+    const modal = new ModalBuilder()
+      .setCustomId('igg_order_modal')
+      .setTitle('In-Game Gifting Order');
 
-  modal.addComponents(
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('roblox_username')
-        .setLabel('Whats your Roblox Username?')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. Builderman')
-        .setRequired(true)
-        .setMaxLength(20)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('gamepass_price')
-        .setLabel('Gamepass Price? (in Robux)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. 400')
-        .setRequired(true)
-        .setMaxLength(10)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('game_name')
-        .setLabel('Game name in Roblox?')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. Blox Fruits, Steal a Brainrot')
-        .setRequired(true)
-        .setMaxLength(80)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('gifting_type')
-        .setLabel('Global Gifting or Same Server?')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. Global Gifting / Same Server')
-        .setRequired(true)
-        .setMaxLength(50)
-    ),
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId('gamepass_name')
-        .setLabel('Which gamepass do you want to buy?')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. Gamepass 1, Gamepass 2, Gamepass 3')
-        .setRequired(true)
-        .setMaxLength(100)
-    ),
-  );
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('roblox_username')
+          .setLabel('Whats your Roblox Username?')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Builderman')
+          .setRequired(true)
+          .setMaxLength(20)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('gamepass_price')
+          .setLabel('Gamepass Price? (in Robux)')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. 400')
+          .setRequired(true)
+          .setMaxLength(10)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('game_name')
+          .setLabel('Game name in Roblox?')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Blox Fruits, Steal a Brainrot')
+          .setRequired(true)
+          .setMaxLength(80)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('gifting_type')
+          .setLabel('Global Gifting or Same Server?')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Global Gifting / Same Server')
+          .setRequired(true)
+          .setMaxLength(50)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('gamepass_name')
+          .setLabel('Which gamepass do you want to buy?')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('e.g. Gamepass 1, Gamepass 2, Gamepass 3')
+          .setRequired(true)
+          .setMaxLength(100)
+      ),
+    );
 
-  await interaction.showModal(modal);
+    await interaction.showModal(modal);
+  } catch (err) {
+    console.error('[igg] Failed to open order form:', err.message);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: '❌ I could not open the order form. Please try the button again.',
+        ephemeral: true,
+      }).catch(() => {});
+    }
+  }
 }
 
 async function handleIggOrderModal(interaction) {
