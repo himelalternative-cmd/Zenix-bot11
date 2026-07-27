@@ -35,25 +35,13 @@ const CATEGORY_SLUGS = {
   others:        'ticket',
 };
 
-// ── Auto-delete timers (channelId → timeoutId) ────────────────────────────────
-const _doneTimers   = new Map();
-const _doneChannels = new Set(); // tracks channels that have been marked as done
-
-const DONE_AUTO_DELETE_MS = 12 * 60 * 60 * 1000; // 12 hours
-
-// Check whether a channel has been marked as done (used by !pay)
-function isTicketDone(channelId) {
-  return _doneChannels.has(channelId);
-}
-
 // ── Ticket action buttons ─────────────────────────────────────────────────────
-function ticketButtons({ claimDisabled = false, closeDisabled = false, doneDisabled = false, claimLabel = 'Claim' } = {}) {
+function ticketButtons({ claimDisabled = false, closeDisabled = false, claimLabel = 'Claim' } = {}) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Secondary).setDisabled(closeDisabled),
     new ButtonBuilder().setCustomId('ticket_claim').setLabel(claimLabel).setEmoji('📌').setStyle(ButtonStyle.Primary).setDisabled(claimDisabled),
     new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setEmoji('📄').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji('🗑').setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId('ticket_done').setLabel('Mark as Done').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(doneDisabled),
   );
 }
 
@@ -244,112 +232,6 @@ async function handleTicketClaim(interaction) {
   await interaction.reply({ embeds: [embed] });
 }
 
-// ── Mark as Done ──────────────────────────────────────────────────────────────
-async function handleTicketDone(interaction) {
-  const member = interaction.member;
-  if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
-    return interaction.reply({ content: '❌ Only administrators can mark tickets as done.', ephemeral: true });
-  }
-
-  const channel  = interaction.channel;
-  const guild    = interaction.guild;
-  const markedBy = interaction.user;
-
-  // Disable the Done button on the ticket panel
-  try {
-    const msgs     = await channel.messages.fetch({ limit: 20 });
-    const original = msgs.find(m =>
-      m.author.id === guild.members.me.id &&
-      m.components.some(row => row.components.some(c => c.customId === 'ticket_close'))
-    );
-    if (original) {
-      await original.edit({ components: [ticketButtons({ doneDisabled: true })] });
-    }
-  } catch {}
-
-  // Lock the channel
-  const ownerId = getOwnerByChannel(channel.id);
-  await channel.permissionOverwrites.edit(guild.id, { SendMessages: false }).catch(() => {});
-  if (ownerId) {
-    await channel.permissionOverwrites.edit(ownerId, { ViewChannel: true, SendMessages: false }).catch(() => {});
-  }
-
-  // Mark as done in memory (so !pay knows not to show the Submit button)
-  _doneChannels.add(channel.id);
-
-  const deleteAt = Math.floor((Date.now() + DONE_AUTO_DELETE_MS) / 1000);
-
-  const doneEmbed = new EmbedBuilder()
-    .setTitle('✅ Ticket Marked as Done')
-    .setDescription(
-      `This ticket has been marked as **Done** by <@${markedBy.id}>.\n\n` +
-      `🕐 A transcript will be sent to the ticket owner and this channel will be **automatically deleted** <t:${deleteAt}:R> (<t:${deleteAt}:F>).`
-    )
-    .setColor(0x2ecc71)
-    .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
-    .setTimestamp();
-
-  await interaction.reply({ embeds: [doneEmbed] });
-
-  // Schedule auto-transcript + DM + delete after 12 hours
-  const timerId = setTimeout(async () => {
-    _doneTimers.delete(channel.id);
-    _doneChannels.delete(channel.id);
-
-    // Generate transcript
-    try {
-      const { text } = await buildTranscript(channel);
-
-      // 1. DM transcript to the user who made the ticket
-      if (ownerId) {
-        try {
-          const ticketUser = await channel.client.users.fetch(ownerId);
-          const dmEmbed = new EmbedBuilder()
-            .setTitle('📄 Your Ticket Transcript')
-            .setDescription(
-              `Your ticket **#${channel.name}** has been closed.\n` +
-              `Here is a full copy of your ticket conversation.`
-            )
-            .setColor(0x3498db)
-            .setFooter({ text: guild.name, iconURL: guild.iconURL() ?? undefined })
-            .setTimestamp();
-          const dmFile = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
-          await ticketUser.send({ embeds: [dmEmbed], files: [dmFile] });
-        } catch {
-          // DMs disabled — skip silently
-        }
-      }
-
-      // 2. Send to log channel if configured
-      const { logChannelId } = getConfig();
-      if (logChannelId) {
-        const logCh = guild.channels.cache.get(logChannelId);
-        if (logCh) {
-          const logEmbed = new EmbedBuilder()
-            .setTitle('📄 Ticket Auto-Deleted (Mark as Done)')
-            .setDescription(
-              `Channel: **#${channel.name}**\n` +
-              `Marked done by: <@${markedBy.id}>\n` +
-              `Ticket owner: ${ownerId ? `<@${ownerId}>` : 'Unknown'}`
-            )
-            .setColor(0x3498db)
-            .setTimestamp();
-          const logFile = new AttachmentBuilder(Buffer.from(text, 'utf-8'), { name: `transcript-${channel.name}.txt` });
-          await logCh.send({ embeds: [logEmbed], files: [logFile] }).catch(() => {});
-        }
-      }
-    } catch (err) {
-      console.error('[Ticket] Failed to generate auto-transcript:', err.message);
-    }
-
-    // Remove ticket record and delete channel
-    if (ownerId) removeTicket(ownerId);
-    await channel.delete(`Ticket auto-deleted 12 hours after being marked as done by ${markedBy.username}`).catch(() => {});
-  }, DONE_AUTO_DELETE_MS);
-
-  _doneTimers.set(channel.id, timerId);
-}
-
 // ── Transcript ────────────────────────────────────────────────────────────────
 async function handleTicketTranscript(interaction) {
   await interaction.deferReply({ ephemeral: true });
@@ -398,14 +280,6 @@ async function handleTicketDeleteConfirm(interaction) {
   const ownerId = getOwnerByChannel(channel.id);
   if (ownerId) removeTicket(ownerId);
 
-  // Clear any pending done-timer for this channel
-  const timerId = _doneTimers.get(channel.id);
-  if (timerId) {
-    clearTimeout(timerId);
-    _doneTimers.delete(channel.id);
-  }
-  _doneChannels.delete(channel.id);
-
   await interaction.reply({ content: '🗑 Deleting ticket...', ephemeral: true });
   setTimeout(() => channel.delete().catch(() => {}), 2000);
 }
@@ -415,11 +289,9 @@ async function handleTicketDeleteCancel(interaction) {
 }
 
 module.exports = {
-  isTicketDone,
   handleTicketSelect,
   handleTicketClose,
   handleTicketClaim,
-  handleTicketDone,
   handleTicketTranscript,
   handleTicketDelete,
   handleTicketDeleteConfirm,

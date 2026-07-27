@@ -1,8 +1,7 @@
-const { EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { handlePayCommand } = require('./payHandler');
 const { handleBuyRobuxCommand, handleIggCommand } = require('./rbxHandler');
 const { getOwnerByChannel, removeTicket } = require('../utils/tickets');
-const { isTicketDone } = require('./ticketHandler');
 const { getPromo, setPromo } = require('../utils/promoSettings');
 
 const CONVERSION_RATE = 0.9; // 1 Robux = 0.9 BDT
@@ -58,25 +57,6 @@ async function handlePrefix(message) {
     await channel.permissionOverwrites.edit(guild.id, { SendMessages: false }).catch(() => {});
     await channel.permissionOverwrites.edit(ownerId, { ViewChannel: true, SendMessages: false }).catch(() => {});
 
-    // Disable the Close button on the original ticket embed if present
-    try {
-      const msgs = await channel.messages.fetch({ limit: 20 });
-      const original = msgs.find(m =>
-        m.author.id === guild.members.me.id &&
-        m.components.some(row => row.components.some(c => c.customId === 'ticket_close'))
-      );
-      if (original) {
-        const disabledRow = new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId('ticket_close').setLabel('Close').setEmoji('🔒').setStyle(ButtonStyle.Secondary).setDisabled(true),
-          new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim').setEmoji('📌').setStyle(ButtonStyle.Primary).setDisabled(false),
-          new ButtonBuilder().setCustomId('ticket_transcript').setLabel('Transcript').setEmoji('📄').setStyle(ButtonStyle.Secondary).setDisabled(false),
-          new ButtonBuilder().setCustomId('ticket_delete').setLabel('Delete').setEmoji('🗑').setStyle(ButtonStyle.Danger).setDisabled(false),
-          new ButtonBuilder().setCustomId('ticket_done').setLabel('Mark as Done').setEmoji('✅').setStyle(ButtonStyle.Success).setDisabled(false)
-        );
-        await original.edit({ components: [disabledRow] }).catch(() => {});
-      }
-    } catch {}
-
     const embed = new EmbedBuilder()
       .setTitle('🔒 Ticket Closed')
       .setDescription(
@@ -131,10 +111,6 @@ async function handlePrefix(message) {
 
   // !Pay command — optional amount: !pay  |  !pay 500  |  !pay $500  |  !pay 500BDT
   if (/^!pay(\s|$)/i.test(content)) {
-    // Don't show the Submit Payment button if this ticket is already marked as done
-    if (isTicketDone(message.channel.id)) {
-      return message.reply({ content: '❌ This ticket has been marked as done. No further payment submissions are accepted.' });
-    }
     const amountRaw = content.replace(/^!pay\s*/i, '').trim() || null;
     await handlePayCommand(message, amountRaw);
     return;

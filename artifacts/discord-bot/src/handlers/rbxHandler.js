@@ -16,6 +16,26 @@ const { getOwnerByChannel } = require('../utils/tickets');
 const ZP_PER_ROBUX     = 0.9;   // !buy robux: 1 Robux = 0.9 ZP
 const ZP_PER_ROBUX_IGG = 0.75;  // !igg: 1 Robux = 0.75 ZP
 
+function getPendingChannel(guild, settings) {
+  if (!settings.pendingChannelId) return null;
+
+  const channel = guild.channels.cache.get(settings.pendingChannelId);
+  if (!channel || typeof channel.send !== 'function') return null;
+  return channel;
+}
+
+function isPendingChannel(interaction, settings) {
+  return Boolean(settings.pendingChannelId && interaction.channelId === settings.pendingChannelId);
+}
+
+function getOrderChannel(guild, settings) {
+  if (!settings.orderChannelId) return null;
+
+  const channel = guild.channels.cache.get(settings.orderChannelId);
+  if (!channel || typeof channel.send !== 'function') return null;
+  return channel;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  !buy robux / !buy rbx / !buy rb — any member, ticket or bot-cmd only
 // ═══════════════════════════════════════════════════════════════════════════
@@ -23,6 +43,7 @@ const ZP_PER_ROBUX_IGG = 0.75;  // !igg: 1 Robux = 0.75 ZP
 // ── Send the order embed with a button ──────────────────────────────────────
 async function handleBuyRobuxCommand(message) {
   const settings = getGuildSettings(message.guild.id);
+  const pendingChannel = getPendingChannel(message.guild, settings);
 
   const isTicket = !!getOwnerByChannel(message.channel.id);
   const isBotCmd = settings.botCmdChannelId === message.channel.id;
@@ -32,6 +53,16 @@ async function handleBuyRobuxCommand(message) {
       content:
         '❌ This command can only be used inside a **ticket** or the configured **bot commands channel**.\n' +
         '_Ask an admin to set one with `/set botcmd channel`._',
+    });
+    setTimeout(() => reply.delete().catch(() => {}), 8000);
+    return;
+  }
+
+  if (!pendingChannel) {
+    const reply = await message.reply({
+      content:
+        '❌ Pending orders channel is not configured or is unavailable.\n' +
+        'An administrator must run `/set pending channel` first.',
     });
     setTimeout(() => reply.delete().catch(() => {}), 8000);
     return;
@@ -55,7 +86,7 @@ async function handleBuyRobuxCommand(message) {
       .setStyle(ButtonStyle.Primary)
   );
 
-  await message.channel.send({ embeds: [embed], components: [row] });
+  await pendingChannel.send({ embeds: [embed], components: [row] });
   await message.delete().catch(() => {});
 }
 
@@ -91,6 +122,17 @@ async function handleBuyRobuxButton(interaction) {
 
 // ── Modal submitted → validate → deduct ZP → post order embed with Done button ──
 async function handleBuyRobuxModal(interaction) {
+  const settings = getGuildSettings(interaction.guildId);
+  const pendingChannel = getPendingChannel(interaction.guild, settings);
+  if (!pendingChannel) {
+    return interaction.reply({
+      content:
+        '❌ Pending orders channel is not configured or is unavailable. ' +
+        'Please ask an administrator to run `/set pending channel`.',
+      ephemeral: true,
+    });
+  }
+
   const robloxUsername = interaction.fields.getTextInputValue('roblox_username').trim();
   const robuxRaw       = interaction.fields.getTextInputValue('robux_amount').trim();
 
@@ -145,8 +187,8 @@ async function handleBuyRobuxModal(interaction) {
     ephemeral: true,
   });
 
-  // Order embed with Done Order button for admin
-  await interaction.channel.send({
+  // Only the pending-orders channel receives the order and its completion button.
+  await pendingChannel.send({
     embeds: [
       new EmbedBuilder()
         .setTitle('🎮 Robux Order Placed')
@@ -178,6 +220,22 @@ async function handleBuyRobuxModal(interaction) {
 
 // ── Admin clicks Done Order ───────────────────────────────────────────────────
 async function handleRbxDone(interaction) {
+  const settings = getGuildSettings(interaction.guildId);
+  if (!isPendingChannel(interaction, settings)) {
+    return interaction.reply({
+      content: '❌ Orders can only be completed from the configured pending orders channel.',
+      ephemeral: true,
+    });
+  }
+
+  const orderChannel = getOrderChannel(interaction.guild, settings);
+  if (!orderChannel) {
+    return interaction.reply({
+      content: '❌ Orders channel is not configured or is unavailable. Configure it with `/set order channel` first.',
+      ephemeral: true,
+    });
+  }
+
   if (
     !interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
     interaction.member.id !== interaction.guild.ownerId
@@ -198,7 +256,6 @@ async function handleRbxDone(interaction) {
   const robuxAmount = parseInt(robuxAmountStr, 10) || 0;
   const zpPaidNum   = parseInt(zpPaid.replace(/[^0-9]/g, ''), 10) || 0;
 
-  const settings   = getGuildSettings(interaction.guildId);
   const orderId    = generateOrderId(settings.orderIdPrefix || 'ORDER');
   const now        = Math.floor(Date.now() / 1000);
   const orderColor = settings.orderColor ?? 0x010101;
@@ -213,20 +270,23 @@ async function handleRbxDone(interaction) {
     `• Order id : ${orderId}\n` +
     `• Time : <t:${now}:R>`;
 
-  if (settings.orderChannelId) {
-    const logChannel = interaction.guild.channels.cache.get(settings.orderChannelId);
-    if (logChannel) {
-      await logChannel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle(settings.orderTitle || '▶ Order Details:')
-            .setDescription(orderLines)
-            .setColor(orderColor)
-            .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-            .setTimestamp(),
-        ],
-      }).catch(() => {});
-    }
+  try {
+    await orderChannel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle(settings.orderTitle || '▶ Order Details:')
+          .setDescription(orderLines)
+          .setColor(orderColor)
+          .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+          .setTimestamp(),
+      ],
+    });
+  } catch (err) {
+    console.error('[rbx] Failed to post completed order:', err.message);
+    return interaction.reply({
+      content: '❌ I could not post the completed order to the configured orders channel. Check the bot permissions and try again.',
+      ephemeral: true,
+    });
   }
 
   // Log to spent leaderboard
@@ -268,6 +328,18 @@ async function handleIggCommand(message) {
     return message.reply({ content: '❌ You need **Administrator** permission to use this command.' });
   }
 
+  const settings = getGuildSettings(message.guild.id);
+  const pendingChannel = getPendingChannel(message.guild, settings);
+  if (!pendingChannel) {
+    const reply = await message.reply({
+      content:
+        '❌ Pending orders channel is not configured or is unavailable.\n' +
+        'An administrator must run `/set pending channel` first.',
+    });
+    setTimeout(() => reply.delete().catch(() => {}), 8000);
+    return;
+  }
+
   const embed = new EmbedBuilder()
     .setTitle('🎁 In-Game Gifting')
     .setDescription(
@@ -287,7 +359,7 @@ async function handleIggCommand(message) {
       .setStyle(ButtonStyle.Primary)
   );
 
-  await message.channel.send({ embeds: [embed], components: [row] });
+  await pendingChannel.send({ embeds: [embed], components: [row] });
   await message.delete().catch(() => {});
 }
 
@@ -348,6 +420,17 @@ async function handleIggBuyButton(interaction) {
 }
 
 async function handleIggOrderModal(interaction) {
+  const settings = getGuildSettings(interaction.guildId);
+  const pendingChannel = getPendingChannel(interaction.guild, settings);
+  if (!pendingChannel) {
+    return interaction.reply({
+      content:
+        '❌ Pending orders channel is not configured or is unavailable. ' +
+        'Please ask an administrator to run `/set pending channel`.',
+      ephemeral: true,
+    });
+  }
+
   const robloxUsername = interaction.fields.getTextInputValue('roblox_username').trim();
   const gamepassRaw    = interaction.fields.getTextInputValue('gamepass_price').trim();
   const gameName       = interaction.fields.getTextInputValue('game_name').trim();
@@ -405,7 +488,8 @@ async function handleIggOrderModal(interaction) {
     ephemeral: true,
   });
 
-  await interaction.channel.send({
+  // Only the pending-orders channel receives the order and its completion button.
+  await pendingChannel.send({
     embeds: [
       new EmbedBuilder()
         .setTitle('🎁 In-Game Gifting Order Placed')
@@ -439,6 +523,22 @@ async function handleIggOrderModal(interaction) {
 }
 
 async function handleIggDone(interaction) {
+  const settings = getGuildSettings(interaction.guildId);
+  if (!isPendingChannel(interaction, settings)) {
+    return interaction.reply({
+      content: '❌ Orders can only be completed from the configured pending orders channel.',
+      ephemeral: true,
+    });
+  }
+
+  const orderChannel = getOrderChannel(interaction.guild, settings);
+  if (!orderChannel) {
+    return interaction.reply({
+      content: '❌ Orders channel is not configured or is unavailable. Configure it with `/set order channel` first.',
+      ephemeral: true,
+    });
+  }
+
   if (
     !interaction.member.permissions.has(PermissionFlagsBits.Administrator) &&
     interaction.member.id !== interaction.guild.ownerId
@@ -459,59 +559,59 @@ async function handleIggDone(interaction) {
   const giftingType    = field('Gifting Type').replace(/`/g, '');
   const zpPaid         = field('ZP Paid').replace(/\*\*/g, '');
 
-  const settings    = getGuildSettings(interaction.guildId);
-  const orderChanId = settings.orderChannelId;
+  const orderId    = generateOrderId(settings.orderIdPrefix || 'ORDER');
+  const now        = Math.floor(Date.now() / 1000);
+  const orderColor = settings.orderColor ?? 0x010101;
 
-  if (orderChanId) {
-    const orderChannel = interaction.guild.channels.cache.get(orderChanId);
-    if (orderChannel) {
-      const orderId    = generateOrderId(settings.orderIdPrefix || 'ORDER');
-      const now        = Math.floor(Date.now() / 1000);
-      const orderColor = settings.orderColor ?? 0x010101;
+  const orderLines =
+    `• Handler : In-Game Gifting\n` +
+    `• Buyer : <@${buyerId}>\n` +
+    `• Roblox User : \`${robloxUsername}\`\n` +
+    `• Gamepass Price : ${gamepassPrice} Robux\n` +
+    `• Game : \`${gameName}\`\n` +
+    `• Gamepass : \`${gamepassName}\`\n` +
+    `• Gifting Type : \`${giftingType}\`\n` +
+    `• ZP Paid : ${zpPaid}\n` +
+    `• Completed by : <@${interaction.user.id}>\n` +
+    `• Order id : ${orderId}\n` +
+    `• Time : <t:${now}:R>`;
 
-      const orderLines =
-        `• Handler : In-Game Gifting\n` +
-        `• Buyer : <@${buyerId}>\n` +
-        `• Roblox User : \`${robloxUsername}\`\n` +
-        `• Gamepass Price : ${gamepassPrice} Robux\n` +
-        `• Game : \`${gameName}\`\n` +
-        `• Gamepass : \`${gamepassName}\`\n` +
-        `• Gifting Type : \`${giftingType}\`\n` +
-        `• ZP Paid : ${zpPaid}\n` +
-        `• Completed by : <@${interaction.user.id}>\n` +
-        `• Order id : ${orderId}\n` +
-        `• Time : <t:${now}:R>`;
-
-      await orderChannel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setTitle(settings.orderTitle || '▶ Order Details:')
-            .setDescription(orderLines)
-            .setColor(orderColor)
-            .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
-            .setTimestamp(),
-        ],
-      }).catch(() => {});
-
-      // Log to spent leaderboard
-      const zpPaidNum = parseInt(zpPaid.replace(/[^0-9]/g, ''), 10) || 0;
-      logPurchase(interaction.guildId, {
-        userId:    buyerId,
-        username:  robloxUsername,
-        item:      `${gamepassName} in ${gameName} (igg)`,
-        amount:    parseInt(gamepassPrice) || 0,
-        totalCost: zpPaidNum,
-        timestamp: new Date().toISOString(),
-      });
-
-      settings.orderCount = (settings.orderCount || 0) + 1;
-      saveGuildSettings(interaction.guildId, settings);
-      const allSettings = getSettings();
-      let totalOrders = 0;
-      for (const gid of Object.keys(allSettings)) totalOrders += (allSettings[gid].orderCount || 0);
-      interaction.client.user.setActivity(`${totalOrders} orders completed`, { type: 3 });
-    }
+  try {
+    await orderChannel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle(settings.orderTitle || '▶ Order Details:')
+          .setDescription(orderLines)
+          .setColor(orderColor)
+          .setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() ?? undefined })
+          .setTimestamp(),
+      ],
+    });
+  } catch (err) {
+    console.error('[igg] Failed to post completed order:', err.message);
+    return interaction.reply({
+      content: '❌ I could not post the completed order to the configured orders channel. Check the bot permissions and try again.',
+      ephemeral: true,
+    });
   }
+
+  // Log to spent leaderboard
+  const zpPaidNum = parseInt(zpPaid.replace(/[^0-9]/g, ''), 10) || 0;
+  logPurchase(interaction.guildId, {
+    userId:    buyerId,
+    username:  robloxUsername,
+    item:      `${gamepassName} in ${gameName} (igg)`,
+    amount:    parseInt(gamepassPrice) || 0,
+    totalCost: zpPaidNum,
+    timestamp: new Date().toISOString(),
+  });
+
+  settings.orderCount = (settings.orderCount || 0) + 1;
+  saveGuildSettings(interaction.guildId, settings);
+  const allSettings = getSettings();
+  let totalOrders = 0;
+  for (const gid of Object.keys(allSettings)) totalOrders += (allSettings[gid].orderCount || 0);
+  interaction.client.user.setActivity(`${totalOrders} orders completed`, { type: 3 });
 
   // Disable Done button — PRESERVE EMBEDS to prevent message appearing deleted
   const disabledRow = new ActionRowBuilder().addComponents(

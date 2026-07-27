@@ -4,7 +4,7 @@ A Discord.js v14 bot for service-based Discord servers with order management, pa
 
 ## Features
 
-- **Order Management** — Post orders with embeds, auto-DM buyers, track order counts
+- **Order Management** — Send `!buy robux` and `!igg` forms to the configured pending channel, complete them there, post completed orders to the orders channel, and track order counts
 - **Payment Submission** — `!Pay` command with TRX ID modal and proof upload
 - **Robux Converter** — `!500 BDT`, `!1000 RBX`, etc.
 
@@ -39,7 +39,8 @@ A Discord.js v14 bot for service-based Discord servers with order management, pa
 | `/setup dm-message <msg>` | Configure auto-DM sent to buyers |
 | `/setup item add <name>` | Add item to autocomplete list |
 | `/setup item remove <name>` | Remove item from autocomplete list |
-| `/set order channel <#channel>` | Set the channel where orders are posted |
+| `/set order channel <#channel>` | Set the channel where completed orders are posted |
+| `/set pending <#channel>` | Set the channel where `!buy robux` and `!igg` forms are posted for admin completion |
 | `/clear order` | Reset order count to 0 |
 | `/add order <amount>` | Add to the order count |
 | `/chat <message>` | Send a message as the bot (Manage Guild only) |
