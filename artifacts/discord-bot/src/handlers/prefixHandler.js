@@ -30,7 +30,11 @@ async function handlePrefix(message) {
       return message.reply({ embeds: [embed] });
     }
 
-    // !promo — post the saved promo
+    // !promo — post the saved promo (admin only)
+    if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+      return message.reply({ content: '❌ Only administrators can use the promo command.' });
+    }
+
     const promoText = getPromo(message.guild.id);
     if (!promoText) {
       return message.reply({ content: '❌ No promo message set yet. Use `!promo set <text>` to set one.' });
